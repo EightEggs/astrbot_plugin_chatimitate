@@ -1,0 +1,4 @@
+pymongo==4.15.5
+beanie==2.0.1
+jieba-next==1.0.0a5
+pypinyin==0.55.0
