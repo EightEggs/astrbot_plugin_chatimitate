@@ -7,9 +7,9 @@
 
 _✨ 不用AI，胜过AI ✨_  
 
-[![License](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
+[![License](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0.html)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![AstrBot](https://img.shields.io/badge/AstrBot-4.9%2B-orange.svg)](https://github.com/Soulter/AstrBot)
+[![AstrBot](https://img.shields.io/badge/AstrBot-4.9%2B-orange.svg)](https://github.com/AstrBotDevs/AstrBot)
 [![GitHub](https://img.shields.io/badge/作者-EightEggs-blue.svg)](https://github.com/EightEggs)
 
 </div>
