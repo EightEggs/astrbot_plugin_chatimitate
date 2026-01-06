@@ -7,6 +7,7 @@ class MyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        print("MyPlugin initialized with config:", self.config)
 
     async def initialize(self):
         """异步的插件初始化方法，当实例化该插件类之后会自动调用"""

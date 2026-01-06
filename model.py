@@ -9,20 +9,16 @@ from functools import cached_property, cmp_to_key
 
 import pypinyin
 from beanie.operators import Or
-from nonebot import get_plugin_config
-from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message
 
-from .config import BotConfig
-from .db import Answer, Ban, Context
-from .db import Message as MessageModel
-from .db import BlackList
+from db import Answer, Ban, Context
+from db import Message as MessageModel
+from db import BlackList
 
-from .config import Config
+from astrbot.api import logger, AstrBotConfig
 
 import jieba_next.analyse as jieba_analyse
 
-
-plugin_config = get_plugin_config(Config)
+plugin_config = AstrBotConfig("_conf_schema.json")
 
 
 @dataclass
@@ -883,35 +879,35 @@ class Chat:
         await Chat._sync_blacklist()
 
 
-# if __name__ == "__main__":
-#     Chat.clearup_context()
-#     while True:
-#     test_data: ChatData = ChatData(
-#         group_id=1234567,
-#         user_id=1111111,
-#         raw_message="完了又有新bug",
-#         plain_text="完了又有新bug",
-#         time=time.time(),
-#         bot_id=0,
-#     )
+if __name__ == "__main__":
+    Chat.clearup_context()
+    while True:
+        test_data: ChatData = ChatData(
+            group_id=1234567,
+            user_id=1111111,
+            raw_message="完了又有新bug",
+            plain_text="完了又有新bug",
+            time=time.time(),
+            bot_id=0,
+        )
 
-#     test_chat: Chat = Chat(test_data)
+        test_chat: Chat = Chat(test_data)
 
-#     print(test_chat.answer())
-#     test_chat.learn()
+        print(test_chat.answer())
+        test_chat.learn()
 
-#     test_answer_data: ChatData = ChatData(
-#         group_id=1234567,
-#         user_id=1111111,
-#         raw_message="完了又有新bug",
-#         plain_text="完了又有新bug",
-#         time=time.time(),
-#         bot_id=0,
-#     )
+        test_answer_data: ChatData = ChatData(
+            group_id=1234567,
+            user_id=1111111,
+            raw_message="完了又有新bug",
+            plain_text="完了又有新bug",
+            time=time.time(),
+            bot_id=0,
+        )
 
-#     test_answer: Chat = Chat(test_answer_data)
-#     print(test_chat.answer())
-#     test_answer.learn()
+        test_answer: Chat = Chat(test_answer_data)
+        print(test_chat.answer())
+        test_answer.learn()
 
-#     time.sleep(5)
-#     print(Chat.speak())
+        time.sleep(5)
+        print(Chat.speak())

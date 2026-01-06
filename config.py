@@ -1,7 +1,10 @@
-from pydantic import BaseModel
+from astrbot.api import AstrBotConfig
 
 
-class Config(BaseModel, extra="ignore"):
+class Config():
+    def __init__(self, config: AstrBotConfig) -> None:
+        self.config = config
+
     # answer 相关阈值，值越大，牛牛废话越少；越小，牛牛废话越多
     answer_threshold: int = 3
     # answer 阈值权重

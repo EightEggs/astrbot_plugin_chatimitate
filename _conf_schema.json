@@ -1,0 +1,112 @@
+{
+    "answer_threshold": {
+        "description": "answer 相关阈值，值越大，废话越少；越小，废话越多",
+        "type": "int",
+        "default": 3
+    },
+    "answer_threshold_weights": {
+        "description": "answer 阈值权重",
+        "type": "list",
+        "default": [7, 23, 70]
+    },
+    "topics_size": {
+        "description": "上下文联想，记录多少个关键词（每个群）",
+        "type": "int",
+        "default": 16
+    },
+    "topics_importance": {
+        "description": "上下文命中后，额外的权重系数",
+        "type": "int",
+        "default": 10000
+    },
+    "cross_group_threshold": {
+        "description": "N 个群有相同的回复，就跨群作为全局回复",
+        "type": "int",
+        "default": 2
+    },
+    "repeat_threshold": {
+        "description": "复读的阈值，群里连续多少次有相同的发言，就复读",
+        "type": "int",
+        "default": 3
+    },
+    "speak_threshold": {
+        "description": "主动发言的阈值，越小废话越多",
+        "type": "int",
+        "default": 5
+    },
+    "duplicate_reply": {
+        "description": "说过的话，接下来多少次不再说",
+        "type": "int",
+        "default": 10
+    },
+    "split_probability": {
+        "description": "按逗号分割回复语的概率",
+        "type": "float",
+        "default": 0.5
+    },
+    "drunk_tts_threshold": {
+        "description": "喝醉之后，超过多长的文本全部转换成语音发送",
+        "type": "int",
+        "default": 6
+    },
+    "speak_continuously_probability": {
+        "description": "连续主动说话的概率",
+        "type": "float",
+        "default": 0.5
+    },
+    "speak_poke_probability": {
+        "description": "主动说话加上随机戳一戳群友的概率",
+        "type": "float",
+        "default": 0.6
+    },
+    "speak_continuously_max_len": {
+        "description": "连续主动说话最多几句话",
+        "type": "int",
+        "default": 2
+    },
+    "save_time_threshold": {
+        "description": "每隔多久进行一次持久化 ( 秒 )",
+        "type": "int",
+        "default": 3600
+    },
+    "save_count_threshold": {
+        "description": "单个群超过多少条聊天记录就进行一次持久化，与时间是或的关系",
+        "type": "int",
+        "default": 1000
+    },
+    "save_reserved_size": {
+        "description": "保存时，给内存中保留的大小",
+        "type": "int",
+        "default": 100
+    },
+    "enable_reaction": {
+        "description": "启用表情回应功能",
+        "type": "bool",
+        "default": true
+    },
+    "enable_probability_reaction": {
+        "description": "启用日常消息一定概率触发表情回应",
+        "type": "bool",
+        "default": true
+    },
+    "reaction_probability": {
+        "description": "触发表情回应的概率",
+        "type": "float",
+        "default": 0.1
+    },
+    "enable_face_reaction": {
+        "description": "当收到含表情的消息时，自动回应",
+        "type": "bool",
+        "default": false
+    },
+    "enable_auto_reply_on_reaction": {
+        "description": "有人用表情回应任意消息时，牛牛跟着回应",
+        "type": "bool",
+        "default": true
+    },
+    "reply_with_same_emoji": {
+        "description": "是否回应相同的表情",
+        "type": "bool",
+        "default": true
+    }
+}
