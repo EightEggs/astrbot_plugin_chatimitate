@@ -1,16 +1,26 @@
+import time
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star
 from astrbot.api import logger, AstrBotConfig
-
+from .model import ChatData, Chat
 
 class MyPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        print("MyPlugin initialized with config:", self.config)
 
     async def initialize(self):
         """异步的插件初始化方法，当实例化该插件类之后会自动调用"""
+        test_data: ChatData = ChatData(
+            group_id='1234567',
+            user_id='1111111',
+            raw_message="完了又有新bug",
+            plain_text="完了又有新bug",
+            time=time.time(),
+            bot_id='0',
+        )
+
+        test_chat: Chat = Chat(test_data, self.config)
 
     @filter.command("helloworld")
     async def helloworld(self, event: AstrMessageEvent):

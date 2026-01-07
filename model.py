@@ -10,25 +10,25 @@ from functools import cached_property, cmp_to_key
 import pypinyin
 from beanie.operators import Or
 
-from db import Answer, Ban, Context
-from db import Message as MessageModel
-from db import BlackList
+from .db import Answer, Ban, Context
+from .db import Message as MessageModel
+from .db import BlackList
 
 from astrbot.api import logger, AstrBotConfig
+from astrbot.api.event import AstrMessageEvent
+from astrbot.core.platform.astrbot_message import AstrBotMessage
 
 import jieba_next.analyse as jieba_analyse
-
-plugin_config = AstrBotConfig("_conf_schema.json")
 
 
 @dataclass
 class ChatData:
-    group_id: int
-    user_id: int
+    group_id: str
+    user_id: str
     raw_message: str
     plain_text: str
     time: int
-    bot_id: int
+    bot_id: str
 
     _keywords_size: int = 2
 
@@ -75,47 +75,88 @@ class ChatData:
 
     @cached_property
     def to_me(self) -> bool:
-        return self.plain_text.startswith("牛牛")
+        # TODO: 改成真正的 at 检测以及 bot 名称检测
+        return self.plain_text.startswith("bot")
 
 
 class Chat:
+    ANSWER_THRESHOLD: int
+    ANSWER_THRESHOLD_WEIGHTS: list[int]
+    TOPICS_SIZE: int
+    TOPICS_IMPORTANCE: int
+    CROSS_GROUP_THRESHOLD: int
+    REPEAT_THRESHOLD: int
+    SPEAK_THRESHOLD: int
+    DUPLICATE_REPLY: int
+    SPLIT_PROBABILITY: float
+    DRUNK_TTS_THRESHOLD: int
+    SPEAK_CONTINUOUSLY_PROBABILITY: float
+    SPEAK_POKE_PROBABILITY: float
+    SPEAK_CONTINUOUSLY_MAX_LEN: int
+    SAVE_TIME_THRESHOLD: int
+    SAVE_COUNT_THRESHOLD: int
+    SAVE_RESERVED_SIZE: int
+    BLACKLIST_FLAG: int
+    SPEAK_FLAG: str
+    REPLY_FLAG: str
+
+    def __init__(self, data: ChatData | AstrMessageEvent, plugin_config: AstrBotConfig) -> None:
+        if isinstance(data, ChatData):
+            self.chat_data = data
+            self.config = plugin_config
+            logger.info(f"Chat initialized with data: {self.chat_data} and config: {self.config}")
+
+        elif isinstance(data, AstrMessageEvent):
+            self.chat_data = ChatData(
+                group_id=data.get_group_id(),
+                user_id=data.get_sender_id(),
+                # 删除图片子类型字段，同一张图子类型经常不一样，影响判断
+                raw_message=re.sub(r"\.image,.+?\]", ".image]", str(data.message_obj.raw_message)),
+                plain_text=data.get_message_str(),
+                time=data.message_obj.timestamp,
+                bot_id=data.get_self_id(),
+            )
+            self.config = plugin_config
+        
+       
+
     # 可以试着改改的参数
 
-    ANSWER_THRESHOLD = plugin_config.answer_threshold
-    ANSWER_THRESHOLD_WEIGHTS = plugin_config.answer_threshold_weights
-    TOPICS_SIZE = plugin_config.topics_size
-    TOPICS_IMPORTANCE = plugin_config.topics_importance
-    CROSS_GROUP_THRESHOLD = plugin_config.cross_group_threshold
-    REPEAT_THRESHOLD = plugin_config.repeat_threshold
-    SPEAK_THRESHOLD = plugin_config.speak_threshold
-    DUPLICATE_REPLY = plugin_config.duplicate_reply
+        self.ANSWER_THRESHOLD = self.config.answer_threshold
+        self.ANSWER_THRESHOLD_WEIGHTS = self.config.answer_threshold_weights
+        self.TOPICS_SIZE = self.config.topics_size
+        self.TOPICS_IMPORTANCE = self.config.topics_importance
+        self.CROSS_GROUP_THRESHOLD = self.config.cross_group_threshold
+        self.REPEAT_THRESHOLD = self.config.repeat_threshold
+        self.SPEAK_THRESHOLD = self.config.speak_threshold
+        self.DUPLICATE_REPLY = self.config.duplicate_reply
 
-    SPLIT_PROBABILITY = plugin_config.split_probability
-    DRUNK_TTS_THRESHOLD = plugin_config.drunk_tts_threshold
-    SPEAK_CONTINUOUSLY_PROBABILITY = plugin_config.speak_continuously_probability
-    SPEAK_POKE_PROBABILITY = plugin_config.speak_poke_probability
-    SPEAK_CONTINUOUSLY_MAX_LEN = plugin_config.speak_continuously_max_len
+        self.SPLIT_PROBABILITY = self.config.split_probability
+        self.DRUNK_TTS_THRESHOLD = self.config.drunk_tts_threshold
+        self.SPEAK_CONTINUOUSLY_PROBABILITY = self.config.speak_continuously_probability
+        self.SPEAK_POKE_PROBABILITY = self.config.speak_poke_probability
+        self.SPEAK_CONTINUOUSLY_MAX_LEN = self.config.speak_continuously_max_len
 
-    SAVE_TIME_THRESHOLD = plugin_config.save_time_threshold
-    SAVE_COUNT_THRESHOLD = plugin_config.save_count_threshold
-    SAVE_RESERVED_SIZE = plugin_config.save_reserved_size
+        self.SAVE_TIME_THRESHOLD = self.config.save_time_threshold
+        self.SAVE_COUNT_THRESHOLD = self.config.save_count_threshold
+        self.SAVE_RESERVED_SIZE = self.config.save_reserved_size
 
     # 最好别动的参数
 
-    ANSWER_THRESHOLD_CHOICE_LIST = list(
-        range(
-            ANSWER_THRESHOLD - len(ANSWER_THRESHOLD_WEIGHTS) + 1, ANSWER_THRESHOLD + 1
+        self.ANSWER_THRESHOLD_CHOICE_LIST = list(
+            range(
+                self.ANSWER_THRESHOLD - len(self.ANSWER_THRESHOLD_WEIGHTS) + 1, self.ANSWER_THRESHOLD + 1
+            )
         )
-    )
-    BLACKLIST_FLAG = 114514
-    SPEAK_FLAG = "[PallasBot: Speak]"
-    REPLY_FLAG = "[PallasBot: Reply]"
+        self.BLACKLIST_FLAG = 114514
+        self.SPEAK_FLAG = "[PallasBot: Speak]"
+        self.REPLY_FLAG = "[PallasBot: Reply]"
 
     # 运行期变量
 
     _reply_dict = defaultdict(
         lambda: defaultdict(list)
-    )  # 牛牛回复的消息缓存，暂未做持久化
+    )  # 回复的消息缓存，暂未做持久化
     _message_dict: dict[int, list[MessageModel]] = defaultdict(list)  # 群消息缓存
 
     _reply_lock = asyncio.Lock()  # 回复消息缓存锁
@@ -133,22 +174,6 @@ class Chat:
     )  # 主动发言记录，避免重复内容
 
     ###
-
-    def __init__(self, data: ChatData | GroupMessageEvent):
-        if isinstance(data, ChatData):
-            self.chat_data = data
-            self.config = BotConfig(data.bot_id, data.group_id)
-        elif isinstance(data, GroupMessageEvent):
-            self.chat_data = ChatData(
-                group_id=data.group_id,
-                user_id=data.user_id,
-                # 删除图片子类型字段，同一张图子类型经常不一样，影响判断
-                raw_message=re.sub(r"\.image,.+?\]", ".image]", data.raw_message),
-                plain_text=data.get_plaintext(),
-                time=data.time,
-                bot_id=data.self_id,
-            )
-            self.config = BotConfig(data.self_id, data.group_id)
 
     async def learn(self) -> bool:
         """
@@ -180,7 +205,7 @@ class Chat:
         await self._message_insert()
         return True
 
-    async def answer(self) -> AsyncGenerator[Message, None] | None:
+    async def answer(self) -> AsyncGenerator[AstrBotMessage, None] | None:
         """
         回复这句话，可能会分多次回复，也可能不回复
         """
@@ -191,7 +216,7 @@ class Chat:
         # # 不要一直回复同一个内容
         # if self.chat_data.raw_message == latest_reply['pre_raw_message']:
         #     return None
-        # 有人复读了牛牛的回复，不继续回复
+        # 有人复读了bot的回复，不继续回复
         # if self.chat_data.raw_message == latest_reply['reply']:
         #    return None
 
@@ -218,7 +243,7 @@ class Chat:
 
         async def yield_results(
             results: tuple[list[str], str],
-        ) -> AsyncGenerator[Message, None]:
+        ) -> AsyncGenerator[AstrBotMessage, None]:
             answer_list, answer_keywords = results
             group_bot_replies = Chat._reply_dict[group_id][bot_id]
             for item in answer_list:
@@ -237,17 +262,17 @@ class Chat:
                         Chat._recent_topics[group_id] += [
                             k
                             for k in answer_keywords.split(" ")
-                            if not k.startswith("牛牛")
+                            if not k.startswith("bot")
                         ]
                 async with Chat._topics_lock:
                     Chat._recent_topics[group_id] += [
                         k
                         for k in self.chat_data._keywords_list
-                        if not k.startswith("牛牛")  # type: ignore
+                        if not k.startswith("bot")  # type: ignore
                     ]
                 # if "[CQ:" not in item and len(item) > Chat.DRUNK_TTS_THRESHOLD and await self.config.drunkenness():
                 #     yield Message(Chat._text_to_speech(item))
-                yield Message(item)
+                yield AstrBotMessage(item)
 
             async with Chat._reply_lock:
                 group_bot_replies = group_bot_replies[-Chat.SAVE_RESERVED_SIZE :]
@@ -274,7 +299,7 @@ class Chat:
         return False
 
     @staticmethod
-    async def speak() -> tuple[int, int, list[Message], int | None] | None:
+    async def speak() -> tuple[int, int, list[AstrBotMessage], int | None] | None:
         """
         主动发言，返回当前最希望发言的 bot 账号、群号、发言消息 List、戳一戳目标，也有可能不发言
         """
@@ -316,7 +341,7 @@ class Chat:
             if not len(group_replies) or len(group_msgs) < basic_msgs_len:
                 continue
 
-            # 一般来说所有牛牛都是一起回复的，最后发言时间应该是一样的，随意随便选一个[0]就好了
+            # 一般来说所有bot都是一起回复的，最后发言时间应该是一样的，随意随便选一个[0]就好了
             group_replies_front = list(group_replies.values())[0]
             if (
                 not len(group_replies_front)
@@ -362,7 +387,7 @@ class Chat:
                 return (
                     cur_keywords not in ban_keywords  # noqa: B023
                     and cur_raw_message not in recently  # noqa: B023
-                    and not cur_raw_message.startswith("牛牛")
+                    and not cur_raw_message.startswith("bot")
                     and not cur_raw_message.startswith("[CQ:xml")
                     and "\n" not in cur_raw_message
                 )
@@ -441,7 +466,7 @@ class Chat:
                 ban_reply = reply
                 break
 
-        # 这种情况一般是有些 CQ 码，牛牛发送的时候，和被回复的时候，里面的内容不一样
+        # 这种情况一般是有些 CQ 码，bot发送的时候，和被回复的时候，里面的内容不一样
         if not ban_reply:
             search = re.search(r"(\[CQ:[a-zA-z0-9-_.]+)", ban_raw_message)
             if search:
@@ -512,7 +537,7 @@ class Chat:
         if self.chat_data.is_plain_text:
             async with Chat._topics_lock:
                 Chat._recent_topics[group_id] += [
-                    k for k in self.chat_data._keywords_list if not k.startswith("牛牛")
+                    k for k in self.chat_data._keywords_list if not k.startswith("bot")
                 ]
 
         cur_time = self.chat_data.time
@@ -713,10 +738,10 @@ class Chat:
             if self.chat_data.is_image and "[CQ:" not in sample_msg:
                 # 图片消息不回复纯文本。图片经常是表情包，后面的纯文本啥都有，很乱
                 continue
-            if sample_msg.startswith("牛牛"):
+            if sample_msg.startswith("bot"):
                 if not self.chat_data.to_me or len(sample_msg) <= 6:
-                    # 这种一般是学反过来的，比如有人教“牛牛你好”——“你好”（反复发了好几次，互为上下文了）
-                    # 然后下次有人发“你好”，突然回个“牛牛你好”，有点莫名其妙的
+                    # 这种一般是学反过来的，比如有人教“bot你好”——“你好”（反复发了好几次，互为上下文了）
+                    # 然后下次有人发“你好”，突然回个“bot你好”，有点莫名其妙的
                     continue
             if sample_msg.startswith("[CQ:xml"):
                 continue
@@ -758,7 +783,7 @@ class Chat:
         )[0]
         answer_str = random.choice(final_answer.messages)
         answer_keywords = final_answer.keywords
-        answer_str = answer_str.removeprefix("牛牛")
+        answer_str = answer_str.removeprefix("bot")
 
         if (
             0 < answer_str.count("，") <= 3
