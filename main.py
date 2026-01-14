@@ -5,7 +5,7 @@ import time
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 from astrbot.api import logger, AstrBotConfig
-from .emoji import get_random_emoji
+from .emoji import ReactionCache, get_reaction_candidates, should_trigger_reaction
 from .model import Chat
 
 class MyPlugin(Star):
@@ -14,6 +14,7 @@ class MyPlugin(Star):
         self.config = config
         self._stop_event = asyncio.Event()
         self._bg_task: asyncio.Task | None = None
+        self._reaction_cache = ReactionCache(ttl_seconds=3600)
 
     async def initialize(self):
         """异步的插件初始化方法，当实例化该插件类之后会自动调用"""
@@ -94,16 +95,32 @@ class MyPlugin(Star):
             logger.warning("chatimitate: learn failed", exc_info=True)
 
         # 可选：概率表情回应（平台不支持时通常会降级为发送 emoji 文本）
-        try:
-            if getattr(self.config, "enable_reaction", True) and getattr(
-                self.config, "enable_probability_reaction", True
-            ):
-                prob = float(getattr(self.config, "reaction_probability", 0.1))
-                if prob > 0 and random.random() < prob and hasattr(event, "react"):
-                    await event.react(get_random_emoji())
-        except Exception:
-            # 反应失败不影响主流程
-            logger.debug("chatimitate: react failed", exc_info=True)
+        if should_trigger_reaction(self.config) and hasattr(event, "react"):
+            raw_message = getattr(event, "raw_message", None)
+            # 轻量去重：避免同一条消息重复 react（在 QQ 群里体验更好）
+            try:
+                gid = str(event.get_group_id())
+                sid = str(event.get_sender_id())
+                ts = str(getattr(getattr(event, "message_obj", None), "timestamp", ""))
+                rm = str(raw_message or "")
+                react_key = f"{gid}:{sid}:{ts}:{hash(rm)}"
+            except Exception:
+                react_key = ""
+
+            try:
+                if react_key and self._reaction_cache.seen(react_key, time.time()):
+                    raise RuntimeError("duplicate react")
+                for candidate in get_reaction_candidates(raw_message, self.config):
+                    try:
+                        await event.react(candidate)
+                        if react_key:
+                            self._reaction_cache.mark(react_key, time.time())
+                        break
+                    except Exception:
+                        continue
+            except Exception:
+                # 反应失败不影响主流程
+                logger.debug("chatimitate: react failed", exc_info=True)
 
         # 再尝试回复
         try:
