@@ -43,7 +43,7 @@ class MyPlugin(Star):
         """异步的插件销毁方法，当插件被卸载/停用时会自动调用"""
 
 
-'''
+r'''
 import asyncio
 import random
 import re
