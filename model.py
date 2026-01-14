@@ -98,7 +98,6 @@ class Chat:
     SPEAK_THRESHOLD: int
     DUPLICATE_REPLY: int
     SPLIT_PROBABILITY: float
-    DRUNK_TTS_THRESHOLD: int
     SPEAK_CONTINUOUSLY_PROBABILITY: float
     SPEAK_POKE_PROBABILITY: float
     SPEAK_CONTINUOUSLY_MAX_LEN: int
@@ -132,24 +131,30 @@ class Chat:
         # 可以试着改改的参数
 
         # 这些参数会被大量 classmethod/staticmethod 引用，因此必须写到类属性上
-        Chat.ANSWER_THRESHOLD = self.config.answer_threshold
-        Chat.ANSWER_THRESHOLD_WEIGHTS = self.config.answer_threshold_weights
-        Chat.TOPICS_SIZE = self.config.topics_size
-        Chat.TOPICS_IMPORTANCE = self.config.topics_importance
-        Chat.CROSS_GROUP_THRESHOLD = self.config.cross_group_threshold
-        Chat.REPEAT_THRESHOLD = self.config.repeat_threshold
-        Chat.SPEAK_THRESHOLD = self.config.speak_threshold
-        Chat.DUPLICATE_REPLY = self.config.duplicate_reply
+        # 同时做容错：配置缺失时使用默认值
+        Chat.ANSWER_THRESHOLD = getattr(self.config, "answer_threshold", 3)
+        Chat.ANSWER_THRESHOLD_WEIGHTS = getattr(
+            self.config, "answer_threshold_weights", [7, 23, 70]
+        )
+        Chat.TOPICS_SIZE = getattr(self.config, "topics_size", 16)
+        Chat.TOPICS_IMPORTANCE = getattr(self.config, "topics_importance", 10000)
+        Chat.CROSS_GROUP_THRESHOLD = getattr(self.config, "cross_group_threshold", 2)
+        Chat.REPEAT_THRESHOLD = getattr(self.config, "repeat_threshold", 3)
+        Chat.SPEAK_THRESHOLD = getattr(self.config, "speak_threshold", 5)
+        Chat.DUPLICATE_REPLY = getattr(self.config, "duplicate_reply", 10)
 
-        Chat.SPLIT_PROBABILITY = self.config.split_probability
-        Chat.DRUNK_TTS_THRESHOLD = self.config.drunk_tts_threshold
-        Chat.SPEAK_CONTINUOUSLY_PROBABILITY = self.config.speak_continuously_probability
-        Chat.SPEAK_POKE_PROBABILITY = self.config.speak_poke_probability
-        Chat.SPEAK_CONTINUOUSLY_MAX_LEN = self.config.speak_continuously_max_len
+        Chat.SPLIT_PROBABILITY = getattr(self.config, "split_probability", 0.5)
+        Chat.SPEAK_CONTINUOUSLY_PROBABILITY = getattr(
+            self.config, "speak_continuously_probability", 0.5
+        )
+        Chat.SPEAK_POKE_PROBABILITY = getattr(self.config, "speak_poke_probability", 0.6)
+        Chat.SPEAK_CONTINUOUSLY_MAX_LEN = getattr(
+            self.config, "speak_continuously_max_len", 2
+        )
 
-        Chat.SAVE_TIME_THRESHOLD = self.config.save_time_threshold
-        Chat.SAVE_COUNT_THRESHOLD = self.config.save_count_threshold
-        Chat.SAVE_RESERVED_SIZE = self.config.save_reserved_size
+        Chat.SAVE_TIME_THRESHOLD = getattr(self.config, "save_time_threshold", 3600)
+        Chat.SAVE_COUNT_THRESHOLD = getattr(self.config, "save_count_threshold", 1000)
+        Chat.SAVE_RESERVED_SIZE = getattr(self.config, "save_reserved_size", 100)
 
     # 最好别动的参数
 
@@ -281,8 +286,6 @@ class Chat:
                         for k in self.chat_data._keywords_list
                         if not k.startswith("bot")  # type: ignore
                     ]
-                # if "[CQ:" not in item and len(item) > Chat.DRUNK_TTS_THRESHOLD and await self.config.drunkenness():
-                #     yield Message(Chat._text_to_speech(item))
                 yield AstrBotMessage(item)
 
             async with Chat._reply_lock:
@@ -310,7 +313,9 @@ class Chat:
         return False
 
     @staticmethod
-    async def speak() -> tuple[int, int, list[AstrBotMessage], int | None] | None:
+    async def speak(
+        plugin_config: AstrBotConfig | None = None,
+    ) -> tuple[int, int, list[AstrBotMessage], int | None] | None:
         """
         主动发言，返回当前最希望发言的 bot 账号、群号、发言消息 List、戳一戳目标，也有可能不发言
         """
@@ -407,9 +412,19 @@ class Chat:
             if not available_messages:
                 continue
 
-            taken_name = await BotConfig(bot_id, group_id).taken_name()
-            pretend_msg = list(
-                filter(lambda msg: msg.user_id == taken_name, available_messages)
+            taken_user_id = None
+            if db_operations is not None:
+                try:
+                    bot_cfg = await db_operations.get_bot_config(int(bot_id))
+                    if bot_cfg and bot_cfg.taken_name:
+                        taken_user_id = bot_cfg.taken_name.get(int(group_id))
+                except Exception:
+                    taken_user_id = None
+
+            pretend_msg = (
+                list(filter(lambda msg: msg.user_id == taken_user_id, available_messages))
+                if taken_user_id is not None
+                else []
             )
             first_message = pretend_msg[0] if pretend_msg else available_messages[0]
             speak = first_message.raw_message
@@ -426,27 +441,27 @@ class Chat:
                     }
                 )
 
-            speak_list = [
-                Message(speak),
-            ]
+            speak_list: list[AstrBotMessage] = [AstrBotMessage(speak)]
 
-            while (
-                random.random() < Chat.SPEAK_CONTINUOUSLY_PROBABILITY
-                and len(speak_list) < Chat.SPEAK_CONTINUOUSLY_MAX_LEN
-            ):
-                pre_msg = str(speak_list[-1])
+            # 连续主动说话（可选）：需要传入 plugin_config，否则不做链式回复
+            if plugin_config is not None:
+                while (
+                    random.random() < Chat.SPEAK_CONTINUOUSLY_PROBABILITY
+                    and len(speak_list) < Chat.SPEAK_CONTINUOUSLY_MAX_LEN
+                ):
+                    pre_msg = str(speak_list[-1])
+                    answer_generator = await Chat(
+                        ChatData(group_id, 0, pre_msg, pre_msg, int(cur_time), str(bot_id)),
+                        plugin_config,
+                    ).answer()
+                    if not answer_generator:
+                        break
 
-                answer_generator = await Chat(
-                    ChatData(group_id, 0, pre_msg, pre_msg, int(cur_time), 0)
-                ).answer()
-                if not answer_generator:
-                    break
+                    new_messages = [msg_item async for msg_item in answer_generator]
+                    if not new_messages:
+                        break
 
-                new_messages = [msg_item async for msg_item in answer_generator]
-                if not new_messages:
-                    break
-
-                speak_list.extend(new_messages)
+                    speak_list.extend(new_messages)
 
             target_id = None
             if random.random() < Chat.SPEAK_POKE_PROBABILITY:
@@ -701,16 +716,11 @@ class Chat:
         if not context:
             return None
 
-        is_drunk = await self.config.drunkenness() > 0
-
-        if is_drunk:
-            answer_count_threshold = 1
-        else:
-            answer_count_threshold = random.choices(
-                Chat.ANSWER_THRESHOLD_CHOICE_LIST, weights=Chat.ANSWER_THRESHOLD_WEIGHTS
-            )[0]
-            if self.chat_data.keywords_len == ChatData._keywords_size:
-                answer_count_threshold -= 1
+        answer_count_threshold = random.choices(
+            Chat.ANSWER_THRESHOLD_CHOICE_LIST, weights=Chat.ANSWER_THRESHOLD_WEIGHTS
+        )[0]
+        if self.chat_data.keywords_len == ChatData._keywords_size:
+            answer_count_threshold -= 1
 
         if self.chat_data.to_me:
             cross_group_threshold = 1
@@ -747,7 +757,7 @@ class Chat:
 
         for answer in context.answers:
             count = answer.count
-            if not is_drunk and count < answer_count_threshold:
+            if count < answer_count_threshold:
                 continue
 
             answer_key = answer.keywords
@@ -779,8 +789,6 @@ class Chat:
             # 别的群的 at, 忽略
             elif "[CQ:at,qq=" in sample_msg:
                 continue
-            elif is_drunk and count > answer_count_threshold:
-                candidate_append(candidate_answers, answer)
             else:  # 有这么 N 个群都有相同的回复，就作为全局回复
                 answers_count[answer_key] += 1
                 cur_count = answers_count[answer_key]

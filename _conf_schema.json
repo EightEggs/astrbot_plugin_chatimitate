@@ -103,5 +103,15 @@
         "description": "是否回应相同的表情",
         "type": "bool",
         "default": true
+    },
+    "reaction_prefer_unicode": {
+        "description": "表情回应优先使用 Unicode Emoji（不推荐 QQ/NapCat，默认关闭）",
+        "type": "bool",
+        "default": false
+    },
+    "reaction_enable_unicode_fallback": {
+        "description": "当 face-id 反应失败时，允许回退到 Unicode Emoji",
+        "type": "bool",
+        "default": true
     }
 }

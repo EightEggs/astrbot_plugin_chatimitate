@@ -1,18 +1,9 @@
 import random
-import time
+import re
+from dataclasses import dataclass
+from typing import Any
 
-from nonebot import get_plugin_config, logger, on_message, on_notice
-from nonebot.adapters import Bot, Event
-from nonebot.adapters.onebot.v11 import GroupMessageEvent, NoticeEvent
-from nonebot.exception import ActionFailed
-from nonebot.rule import Rule
-from nonebot.typing import T_State
-from nonebot_plugin_alconna import message_reaction
-from nonebot_plugin_apscheduler import scheduler
-
-from .config import Config
-
-EMOJI_IDS = (
+EMOJI_IDS: tuple[int, ...] = (
     4,
     5,
     8,
@@ -181,212 +172,175 @@ EMOJI_IDS = (
     128563,
 )  # 官方文档就这么多
 
-
-def get_random_emoji() -> str:
-    return str(random.choice(EMOJI_IDS))
-
-
-sent_reactions: dict[str, dict[int, float]] = {}
-last_cleanup_time = 0
-plugin_config = get_plugin_config(Config)
+# QQ/OneBot `face` id 通常是较小的整数。列表里混有较大的 unicode 值时，
+# 在 NapCat/QQ 上作为 reaction 的 face-id 可能不生效。
+QQ_FACE_IDS: tuple[int, ...] = tuple(x for x in EMOJI_IDS if x <= 400)
 
 
-def should_trigger_reaction() -> bool:
-    return random.random() < plugin_config.reaction_probability
-
-
-def has_sent_reaction(bot_id: str, message_id: int) -> bool:
-    if bot_id not in sent_reactions:
-        sent_reactions[bot_id] = {}
-    return message_id in sent_reactions[bot_id]
-
-
-def mark_reaction_sent(bot_id: str, message_id: int):
-    if bot_id not in sent_reactions:
-        sent_reactions[bot_id] = {}
-    sent_reactions[bot_id][message_id] = time.time()
-
-
-async def send_reaction(bot: Bot, event: Event, emoji_code: str) -> None:
-    bot_id = str(bot.self_id)
-    message_id = event.message_id
-
-    if has_sent_reaction(bot_id, message_id):
-        logger.debug(f"[Reaction] Bot {bot_id} already reacted to message {message_id}")
-        return
-
-    try:
-        await message_reaction(emoji_code, str(message_id), event, bot, delete=False)
-        mark_reaction_sent(bot_id, message_id)
-        logger.debug(
-            f"[Reaction] Bot {bot_id} successfully sent emoji {emoji_code} in group {event.group_id}"
-        )
-    except ActionFailed as e:
-        logger.debug(
-            f"[Reaction] Bot {bot_id} failed to send emoji {emoji_code} in group {event.group_id}: {str(e)}",
-            exc_info=True,
-        )
-        raise
-    except Exception as e:
-        logger.debug(
-            f"[Reaction] Unexpected error when sending emoji {emoji_code}: {str(e)}",
-            exc_info=True,
-        )
-        raise
-
-
-async def reaction_enabled(bot: Bot, event: Event, state: T_State) -> bool:
-    return plugin_config.enable_reaction
-
-
-async def subfeature_enabled(flag_name: str):
-    async def _enabled_check(bot: Bot, event: Event, state: T_State) -> bool:
-        return getattr(plugin_config, flag_name, True)
-
-    return _enabled_check
-
-
-reaction_msg = on_message(
-    rule=Rule(reaction_enabled)
-    & Rule(
-        lambda bot, event, state: random.random() < plugin_config.reaction_probability
-    ),
-    priority=16,
+# 更通用的「reaction emoji」集合（跨平台更可能可用）
+UNICODE_REACTIONS: tuple[str, ...] = (
+    "👍",
+    "❤️",
+    "😂",
+    "🤣",
+    "🥹",
+    "🤔",
+    "😅",
+    "😭",
+    "😡",
+    "🎉",
 )
 
 
-@reaction_msg.handle()
-async def handle_reaction(bot: Bot, event: GroupMessageEvent):
-    """对所有消息，满足概率回应表情"""
-    if not plugin_config.enable_probability_reaction:
-        logger.debug(
-            "[Reaction] Probability reaction is disabled",
-            extra={"bot_id": str(bot.self_id)},
-        )
-        return
+def get_random_face_id() -> int:
+    """Return a random QQ/OneBot `face` id."""
 
-    bot_id = str(bot.self_id)
-    emoji_code = get_random_emoji()
+    # 优先选 QQ 常见 face id（更稳）
+    if QQ_FACE_IDS:
+        return random.choice(QQ_FACE_IDS)
+    return random.choice(EMOJI_IDS)
 
+
+def format_cq_face(face_id: int) -> str:
+    """Format a CQ `face` segment."""
+
+    return f"[CQ:face,id={int(face_id)}]"
+
+
+_CQ_FACE_RE = re.compile(r"\[CQ:face,(?:[^\]]*,)?id=(\d+)(?:,[^\]]*)?\]")
+
+
+def extract_cq_face_ids(raw_message: str) -> list[int]:
+    """Extract CQ face ids from a raw message string."""
+
+    return [int(x) for x in _CQ_FACE_RE.findall(raw_message or "")]
+
+
+def has_cq_face(raw_message: str) -> bool:
+    """Check whether a raw message contains any CQ face segment."""
+
+    return bool(_CQ_FACE_RE.search(raw_message or ""))
+
+
+def get_random_unicode_emoji() -> str:
+    """Return a random unicode emoji for reaction."""
+
+    return random.choice(UNICODE_REACTIONS)
+
+
+def _unique_preserve_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for it in items:
+        if it in seen:
+            continue
+        seen.add(it)
+        out.append(it)
+    return out
+
+
+def should_trigger_reaction(config: Any) -> bool:
+    """Decide whether to trigger a reaction based on plugin config.
+
+    Expected config keys (from `_conf_schema.json`):
+    - enable_reaction (bool)
+    - enable_probability_reaction (bool)
+    - reaction_probability (float)
+    """
+
+    if not getattr(config, "enable_reaction", True):
+        return False
+    if not getattr(config, "enable_probability_reaction", True):
+        return False
     try:
-        await send_reaction(bot, event, emoji_code)
-    except ActionFailed as e:
-        logger.debug(
-            f"[Reaction] Bot {bot_id} failed to send emoji {emoji_code} in group {event.group_id}: {str(e)}",
-            exc_info=True,
-        )
+        prob = float(getattr(config, "reaction_probability", 0.1))
+    except Exception:
+        prob = 0.0
+    if prob <= 0:
+        return False
+    return random.random() < prob
 
 
-async def has_face(bot: Bot, event: GroupMessageEvent, state: T_State) -> bool:
-    return any(seg.type == "face" for seg in event.message)
+def choose_reaction_emoji(
+    raw_message: str | None = None,
+    *,
+    prefer_same_face: bool = True,
+) -> str:
+    """Choose an emoji for reacting.
+
+    - If `prefer_same_face` and the message contains CQ `face`, reuse one of them.
+    - Otherwise fall back to a unicode reaction emoji.
+    """
+
+    if prefer_same_face and raw_message:
+        face_ids = extract_cq_face_ids(raw_message)
+        if face_ids:
+            return format_cq_face(random.choice(face_ids))
+
+    return get_random_unicode_emoji()
 
 
-reaction_msg_with_face = on_message(
-    rule=Rule(reaction_enabled) & Rule(has_face),
-    priority=15,
-)
+def get_reaction_candidates(raw_message: str | None, config: Any) -> list[str]:
+    """Return reaction candidates in priority order.
+
+    QQ/NapCat/OneBot 场景下，`event.react()` 很多实现更偏向“emoji id”(数字字符串)。
+    因此默认优先返回 face-id（同款优先），最后再回退到 unicode emoji。
+
+    Config keys:
+    - reply_with_same_emoji (bool): 有同款 face 时优先用同款
+    - reaction_prefer_unicode (bool): 为 true 时把 unicode 放在更前
+    - reaction_enable_unicode_fallback (bool): 是否允许 unicode 回退
+    """
+
+    prefer_same = bool(getattr(config, "reply_with_same_emoji", True))
+    prefer_unicode = bool(getattr(config, "reaction_prefer_unicode", False))
+    enable_unicode_fallback = bool(getattr(config, "reaction_enable_unicode_fallback", True))
+
+    candidates: list[str] = []
+
+    # 1) 同款优先：从消息里提取 CQ face id，优先用 id 字符串
+    if prefer_same and raw_message:
+        face_ids = extract_cq_face_ids(raw_message)
+        if face_ids:
+            candidates.append(str(random.choice(face_ids)))
+
+    # 2) QQ 兼容：随机一个 face id（数字字符串）
+    candidates.append(str(get_random_face_id()))
+
+    # 3) Unicode 回退（有些端支持更好）
+    if enable_unicode_fallback:
+        candidates.append(get_random_unicode_emoji())
+
+    if prefer_unicode and enable_unicode_fallback:
+        # unicode 提前，但仍保留 face-id 作为候选
+        candidates = [candidates[-1]] + candidates[:-1]
+
+    return _unique_preserve_order(candidates)
 
 
-@reaction_msg_with_face.handle()
-async def handle_reaction_with_face(bot: Bot, event: GroupMessageEvent):
-    """对话里带表情的回应"""
-    if not plugin_config.enable_face_reaction:
-        logger.debug(
-            "[Reaction] Face reaction is disabled", extra={"bot_id": str(bot.self_id)}
-        )
-        return
+@dataclass
+class ReactionCache:
+    """In-memory cache to avoid repeated reacting to same message id."""
 
-    bot_id = str(bot.self_id)
-    emoji_code = get_random_emoji()
+    ttl_seconds: int = 3600
+    _seen: dict[str, float] = None  # type: ignore
 
-    try:
-        await send_reaction(bot, event, emoji_code)
-    except ActionFailed as e:
-        logger.debug(
-            f"[Reaction] Bot {bot_id} failed to send face reaction emoji {emoji_code}: {str(e)}",
-            exc_info=True,
-        )
+    def __post_init__(self) -> None:
+        if self._seen is None:
+            self._seen = {}
 
+    def seen(self, key: str, now: float) -> bool:
+        self.cleanup(now)
+        return key in self._seen
 
-def _check_reaction_event(event: NoticeEvent) -> bool:
-    if event.notice_type == "reaction" and event.sub_type == "add":
-        return getattr(event, "operator_id", None) != getattr(event, "self_id", None)
+    def mark(self, key: str, now: float) -> None:
+        self.cleanup(now)
+        self._seen[key] = now
 
-    if event.notice_type == "group_msg_emoji_like":
-        operator_id = getattr(event, "user_id", None)
-        self_id = getattr(event, "self_id", None)
-        return operator_id != self_id
-
-    return False
-
-
-auto_reaction_add = on_notice(
-    rule=Rule(_check_reaction_event),
-)
-
-
-@auto_reaction_add.handle()
-async def handle_auto_reaction(bot: Bot, event: NoticeEvent, state: T_State):
-    """跟着别人回应"""
-    bot_id = str(bot.self_id)
-    if not plugin_config.enable_auto_reply_on_reaction:
-        logger.debug(f"[Reaction] Bot {bot_id} auto reply on reaction is disabled")
-        return
-    message_id = event.message_id
-    emoji_code = ""
-    if (
-        hasattr(event, "likes")
-        and isinstance(event.likes, list)
-        and len(event.likes) > 0
-    ):
-        emoji_code = str(event.likes[0].get("emoji_id", ""))
-    elif hasattr(event, "code"):
-        emoji_code = str(event.code)
-
-    if not emoji_code:
-        logger.debug(
-            f"[Reaction] No valid emoji found in event for message {message_id}"
-        )
-        return
-    reply_emoji = (
-        str(emoji_code) if plugin_config.reply_with_same_emoji else get_random_emoji()
-    )
-
-    if has_sent_reaction(bot_id, message_id):
-        logger.debug(
-            f"[Reaction] Bot {bot_id} already reacted to message {message_id} in group {event.group_id}"
-        )
-        return
-
-    try:
-        logger.debug(
-            f"[Reaction] Bot {bot_id} sending auto reply emoji {reply_emoji} "
-            f"for message {message_id} in group {event.group_id}"
-        )
-
-        await send_reaction(bot, event, reply_emoji)
-        mark_reaction_sent(bot_id, message_id)
-    except ActionFailed as e:
-        logger.debug(
-            f"[Reaction] Bot {bot_id} failed to send emoji {reply_emoji} in group {event.group_id}: {str(e)}"
-        )
-
-
-@scheduler.scheduled_job("cron", hour=1)
-def cleanup_expired_records():
-    global last_cleanup_time
-    current_time = time.time()
-
-    for bot_id in list(sent_reactions.keys()):
-        sent_reactions[bot_id] = {
-            msg_id: timestamp
-            for msg_id, timestamp in sent_reactions[bot_id].items()
-            if current_time - timestamp < 3600
-        }
-        if not sent_reactions[bot_id]:
-            del sent_reactions[bot_id]
-
-    last_cleanup_time = current_time
-    logger.debug(
-        f"[Reaction] Cleanup completed. Total reactions cached: {sum(len(r) for r in sent_reactions.values())}"
-    )
+    def cleanup(self, now: float) -> None:
+        if not self._seen:
+            return
+        expired_before = now - self.ttl_seconds
+        for k in list(self._seen.keys()):
+            if self._seen[k] < expired_before:
+                del self._seen[k]
