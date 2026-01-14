@@ -98,7 +98,6 @@ class Chat:
     SPEAK_THRESHOLD: int
     DUPLICATE_REPLY: int
     SPLIT_PROBABILITY: float
-    DRUNK_TTS_THRESHOLD: int
     SPEAK_CONTINUOUSLY_PROBABILITY: float
     SPEAK_POKE_PROBABILITY: float
     SPEAK_CONTINUOUSLY_MAX_LEN: int
@@ -145,7 +144,6 @@ class Chat:
         Chat.DUPLICATE_REPLY = getattr(self.config, "duplicate_reply", 10)
 
         Chat.SPLIT_PROBABILITY = getattr(self.config, "split_probability", 0.5)
-        Chat.DRUNK_TTS_THRESHOLD = getattr(self.config, "drunk_tts_threshold", 0)
         Chat.SPEAK_CONTINUOUSLY_PROBABILITY = getattr(
             self.config, "speak_continuously_probability", 0.5
         )
@@ -288,37 +286,12 @@ class Chat:
                         for k in self.chat_data._keywords_list
                         if not k.startswith("bot")  # type: ignore
                     ]
-                # if "[CQ:" not in item and len(item) > Chat.DRUNK_TTS_THRESHOLD and await self.config.drunkenness():
-                #     yield Message(Chat._text_to_speech(item))
                 yield AstrBotMessage(item)
 
             async with Chat._reply_lock:
                 group_bot_replies = group_bot_replies[-Chat.SAVE_RESERVED_SIZE :]
 
         return yield_results(results)
-
-    async def _drunkenness(self) -> int:
-        """Best-effort drunkenness getter.
-
-        AstrBotConfig 可能不存在 drunkenness() API；这里同时兼容：
-        - config.drunkenness() / await config.drunkenness()
-        - config.drunkenness 数值
-        - 不存在时默认 0
-        """
-
-        value = getattr(self.config, "drunkenness", 0)
-        if callable(value):
-            result = value()
-            if asyncio.iscoroutine(result):
-                result = await result
-            try:
-                return int(result)
-            except Exception:
-                return 0
-        try:
-            return int(value)
-        except Exception:
-            return 0
 
     @staticmethod
     async def reply_post_proc(
@@ -743,16 +716,11 @@ class Chat:
         if not context:
             return None
 
-        is_drunk = await self._drunkenness() > 0
-
-        if is_drunk:
-            answer_count_threshold = 1
-        else:
-            answer_count_threshold = random.choices(
-                Chat.ANSWER_THRESHOLD_CHOICE_LIST, weights=Chat.ANSWER_THRESHOLD_WEIGHTS
-            )[0]
-            if self.chat_data.keywords_len == ChatData._keywords_size:
-                answer_count_threshold -= 1
+        answer_count_threshold = random.choices(
+            Chat.ANSWER_THRESHOLD_CHOICE_LIST, weights=Chat.ANSWER_THRESHOLD_WEIGHTS
+        )[0]
+        if self.chat_data.keywords_len == ChatData._keywords_size:
+            answer_count_threshold -= 1
 
         if self.chat_data.to_me:
             cross_group_threshold = 1
@@ -789,7 +757,7 @@ class Chat:
 
         for answer in context.answers:
             count = answer.count
-            if not is_drunk and count < answer_count_threshold:
+            if count < answer_count_threshold:
                 continue
 
             answer_key = answer.keywords
@@ -821,8 +789,6 @@ class Chat:
             # 别的群的 at, 忽略
             elif "[CQ:at,qq=" in sample_msg:
                 continue
-            elif is_drunk and count > answer_count_threshold:
-                candidate_append(candidate_answers, answer)
             else:  # 有这么 N 个群都有相同的回复，就作为全局回复
                 answers_count[answer_key] += 1
                 cur_count = answers_count[answer_key]
