@@ -23,9 +23,7 @@ _✨ 不用AI，胜过AI ✨_
 
 1. 在 `Astrbot` 的插件市场搜索 `astrbot_plugin_chatimitate`，点击安装
 
-2. 安装并启动 `MongoDB` 数据库，具体方法请参考：[MongoDB安装指南](https://docs.mongodb.com/manual/installation/)
-
-3. 重启 `Astrbot`
+2. 重启 `Astrbot`
 
 ## 🤝 插件配置
 
