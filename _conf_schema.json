@@ -44,6 +44,16 @@
         "type": "float",
         "default": 0.5
     },
+    "drunkenness": {
+        "description": "醉酒模式强度（0为关闭）。>0 时更容易触发低阈值回复",
+        "type": "int",
+        "default": 0
+    },
+    "drunk_tts_threshold": {
+        "description": "（预留）醉酒 TTS 长度阈值，暂不启用时可忽略",
+        "type": "int",
+        "default": 0
+    },
     "speak_continuously_probability": {
         "description": "连续主动说话的概率",
         "type": "float",
