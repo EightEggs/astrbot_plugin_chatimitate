@@ -72,8 +72,20 @@ class ChatData:
 
     @cached_property
     def to_me(self) -> bool:
-        # TODO: 改成真正的 at 检测以及 bot 名称检测
-        return self.plain_text.startswith("bot")
+        bot_id = str(self.bot_id)
+
+        # CQ 码 @ 检测（NapCat/OneBot 常见格式）
+        # 兼容：\n  - [CQ:at,qq=123]
+        #       - [CQ:at,qq=123,name=xxx]
+        #       - [CQ:at,qq=all]
+        if re.search(rf"\[CQ:at,qq=({re.escape(bot_id)}|all)(?:,[^\]]*)?\]", self.raw_message):
+            return True
+
+        # 兼容旧逻辑：用“bot...”作为呼叫前缀
+        if self.plain_text.strip().lower().startswith("bot"):
+            return True
+
+        return False
 
 
 class Chat:
@@ -117,37 +129,39 @@ class Chat:
         
        
 
-    # 可以试着改改的参数
+        # 可以试着改改的参数
 
-        self.ANSWER_THRESHOLD = self.config.answer_threshold
-        self.ANSWER_THRESHOLD_WEIGHTS = self.config.answer_threshold_weights
-        self.TOPICS_SIZE = self.config.topics_size
-        self.TOPICS_IMPORTANCE = self.config.topics_importance
-        self.CROSS_GROUP_THRESHOLD = self.config.cross_group_threshold
-        self.REPEAT_THRESHOLD = self.config.repeat_threshold
-        self.SPEAK_THRESHOLD = self.config.speak_threshold
-        self.DUPLICATE_REPLY = self.config.duplicate_reply
+        # 这些参数会被大量 classmethod/staticmethod 引用，因此必须写到类属性上
+        Chat.ANSWER_THRESHOLD = self.config.answer_threshold
+        Chat.ANSWER_THRESHOLD_WEIGHTS = self.config.answer_threshold_weights
+        Chat.TOPICS_SIZE = self.config.topics_size
+        Chat.TOPICS_IMPORTANCE = self.config.topics_importance
+        Chat.CROSS_GROUP_THRESHOLD = self.config.cross_group_threshold
+        Chat.REPEAT_THRESHOLD = self.config.repeat_threshold
+        Chat.SPEAK_THRESHOLD = self.config.speak_threshold
+        Chat.DUPLICATE_REPLY = self.config.duplicate_reply
 
-        self.SPLIT_PROBABILITY = self.config.split_probability
-        self.DRUNK_TTS_THRESHOLD = self.config.drunk_tts_threshold
-        self.SPEAK_CONTINUOUSLY_PROBABILITY = self.config.speak_continuously_probability
-        self.SPEAK_POKE_PROBABILITY = self.config.speak_poke_probability
-        self.SPEAK_CONTINUOUSLY_MAX_LEN = self.config.speak_continuously_max_len
+        Chat.SPLIT_PROBABILITY = self.config.split_probability
+        Chat.DRUNK_TTS_THRESHOLD = self.config.drunk_tts_threshold
+        Chat.SPEAK_CONTINUOUSLY_PROBABILITY = self.config.speak_continuously_probability
+        Chat.SPEAK_POKE_PROBABILITY = self.config.speak_poke_probability
+        Chat.SPEAK_CONTINUOUSLY_MAX_LEN = self.config.speak_continuously_max_len
 
-        self.SAVE_TIME_THRESHOLD = self.config.save_time_threshold
-        self.SAVE_COUNT_THRESHOLD = self.config.save_count_threshold
-        self.SAVE_RESERVED_SIZE = self.config.save_reserved_size
+        Chat.SAVE_TIME_THRESHOLD = self.config.save_time_threshold
+        Chat.SAVE_COUNT_THRESHOLD = self.config.save_count_threshold
+        Chat.SAVE_RESERVED_SIZE = self.config.save_reserved_size
 
     # 最好别动的参数
 
-        self.ANSWER_THRESHOLD_CHOICE_LIST = list(
+        Chat.ANSWER_THRESHOLD_CHOICE_LIST = list(
             range(
-                self.ANSWER_THRESHOLD - len(self.ANSWER_THRESHOLD_WEIGHTS) + 1, self.ANSWER_THRESHOLD + 1
+                Chat.ANSWER_THRESHOLD - len(Chat.ANSWER_THRESHOLD_WEIGHTS) + 1,
+                Chat.ANSWER_THRESHOLD + 1,
             )
         )
-        self.BLACKLIST_FLAG = 114514
-        self.SPEAK_FLAG = "[PallasBot: Speak]"
-        self.REPLY_FLAG = "[PallasBot: Reply]"
+        Chat.BLACKLIST_FLAG = 114514
+        Chat.SPEAK_FLAG = "[PallasBot: Speak]"
+        Chat.REPLY_FLAG = "[PallasBot: Reply]"
 
     # 运行期变量
 
@@ -508,11 +522,23 @@ class Chat:
         TODO: 随机权重可以改为 keywords 出现频率 或 用户发言频率 正相关
         """
 
-        return {
-            group_id: random.choice(group_msgs)
-            for group_id, group_msgs in Chat._message_dict.items()
-            if group_msgs
-        }
+        result: dict[int, MessageModel] = {}
+
+        for group_id, group_msgs in Chat._message_dict.items():
+            if not group_msgs:
+                continue
+
+            keywords_count = defaultdict(int)
+            user_count = defaultdict(int)
+            for msg in group_msgs:
+                keywords_count[msg.keywords] += 1
+                user_count[msg.user_id] += 1
+
+            # 正相关：某关键词/某用户越常出现，其发言越容易被抽到
+            weights = [1 + keywords_count[m.keywords] + user_count[m.user_id] for m in group_msgs]
+            result[group_id] = random.choices(group_msgs, weights=weights, k=1)[0]
+
+        return result
 
     async def _message_insert(self):
         group_id = self.chat_data.group_id
@@ -872,29 +898,67 @@ class Chat:
         cur_time = int(time.time())
         expiration = cur_time - 15 * 24 * 3600  # 15 天前
 
-        # 注意：SQLite版本中，清理逻辑需要重新设计
-        # 由于SQLite不支持复杂的查询删除，我们改为在应用层处理
-        # 这里暂时保留原逻辑，但实际实现需要调整
-        
-        # TODO: 实现SQLite版本的清理逻辑
-        # 当前版本暂时跳过清理操作，避免破坏现有数据
-        logger.warning("SQLite版本的清理功能暂未实现，跳过清理操作")
-        
-        # 原MongoDB清理逻辑（已注释）
-        # await Context.find(
-        #     Context.time < expiration, Context.trigger_count < Chat.ANSWER_THRESHOLD
-        # ).delete()
-        #
-        # all_context = await Context.find(
-        #     Or(Context.trigger_count > 100, Context.clear_time < expiration)
-        # ).to_list()
-        # for context in all_context:
-        #     answers = [
-        #         ans for ans in context.answers if ans.count > 1 or ans.time > expiration
-        #     ]
-        #     context.answers = answers
-        #     context.clear_time = cur_time
-        #     await context.save()
+        if db_operations is None:
+            logger.warning("db 未初始化，跳过清理操作")
+            return
+
+        conn = await db_operations.db.get_connection()
+
+        # SQLite 版本：
+        # 1) 删除 15 天无人触发、且未学会（没有可用答案）的 context
+        # 2) 对长期/到期 context 清理低价值 answers，仅保留：count>1 或 time>expiration
+        try:
+            await conn.execute("BEGIN")
+
+            # 未学会：没有任意答案满足 (count>1 or time>expiration)
+            await conn.execute(
+                """
+                DELETE FROM contexts
+                WHERE time < ?
+                  AND trigger_count < ?
+                  AND id NOT IN (
+                      SELECT DISTINCT context_id FROM answers
+                      WHERE count > 1 OR time > ?
+                  )
+                """,
+                (expiration, Chat.ANSWER_THRESHOLD, expiration),
+            )
+
+            # 找到需要清理 answers 的 contexts
+            async with conn.execute(
+                "SELECT id FROM contexts WHERE trigger_count > 100 OR clear_time < ?",
+                (expiration,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+            context_ids = [row["id"] for row in rows]
+            if context_ids:
+                placeholders = ",".join(["?"] * len(context_ids))
+
+                # 清掉低价值 answers
+                await conn.execute(
+                    f"""
+                    DELETE FROM answers
+                    WHERE context_id IN ({placeholders})
+                      AND NOT (count > 1 OR time > ?)
+                    """,
+                    (*context_ids, expiration),
+                )
+
+                # 更新 clear_time
+                await conn.execute(
+                    f"""
+                    UPDATE contexts
+                    SET clear_time = ?, updated_at = strftime('%s', 'now')
+                    WHERE id IN ({placeholders})
+                    """,
+                    (cur_time, *context_ids),
+                )
+
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
 
     @staticmethod
     async def _find_ban_keywords(context: Context | None, group_id) -> set:

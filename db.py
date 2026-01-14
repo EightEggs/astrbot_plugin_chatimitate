@@ -280,7 +280,7 @@ class DatabaseOperations:
         await conn.execute("""
             INSERT OR REPLACE INTO bot_config 
             (account, admins, auto_accept, security, taken_name, disabled_plugins, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+            VALUES (?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
         """, (
             config.account,
             self._json_serialize(config.admins),
