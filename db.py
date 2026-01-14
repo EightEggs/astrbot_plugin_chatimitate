@@ -8,17 +8,6 @@ from pymongo import IndexModel, AsyncMongoClient
 from urllib.parse import quote_plus
 
 
-class SingProgress(BaseModel):
-    complete: bool = False
-    song_id: str = ""
-    chunk_index: int = 0
-    key: int = 0
-
-    def __init__(self, **data):
-        if "song_id" in data and isinstance(data["song_id"], int):
-            data["song_id"] = str(data["song_id"])
-        super().__init__(**data)
-
 
 class BotConfigModule(Document):
     account: int = Field(...)
@@ -41,7 +30,6 @@ class GroupConfigModule(Document):
     group_id: int = Field(...)
     roulette_mode: int = 1
     banned: bool = False
-    sing_progress: SingProgress | None = None
     disabled_plugins: list[str] = Field(default_factory=list)
 
     class Settings:
@@ -156,7 +144,6 @@ class ImageCache(BaseImageCache):
 
 
 __all__ = [
-    "SingProgress",
     "BotConfigModule",
     "GroupConfigModule",
     "UserConfigModule",
