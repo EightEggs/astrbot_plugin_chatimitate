@@ -44,11 +44,6 @@
         "type": "float",
         "default": 0.5
     },
-    "drunk_tts_threshold": {
-        "description": "喝醉之后，超过多长的文本全部转换成语音发送",
-        "type": "int",
-        "default": 6
-    },
     "speak_continuously_probability": {
         "description": "连续主动说话的概率",
         "type": "float",

@@ -11,6 +11,10 @@ class MyPlugin(Star):
 
     async def initialize(self):
         """异步的插件初始化方法，当实例化该插件类之后会自动调用"""
+        # 初始化数据库，传递插件名称
+        from .db import init_db
+        await init_db(self.name)
+        
         test_data: ChatData = ChatData(
             group_id='1234567',
             user_id='1111111',
