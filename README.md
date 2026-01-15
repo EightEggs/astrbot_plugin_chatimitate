@@ -11,6 +11,7 @@ _✨ 不用AI，胜过AI ✨_
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.9%2B-orange.svg)](https://github.com/AstrBotDevs/AstrBot)
 [![GitHub](https://img.shields.io/badge/作者-EightEggs-blue.svg)](https://github.com/EightEggs)
+[![GitHub](https://img.shields.io/badge/作者-Colin-blue.svg)](https://github.com/cocolinfff)
 
 </div>
 
