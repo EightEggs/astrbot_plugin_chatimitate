@@ -8,7 +8,7 @@ from astrbot.api import logger, AstrBotConfig
 from .emoji import ReactionCache, get_reaction_candidates, should_trigger_reaction
 from .model import Chat
 
-class MyPlugin(Star):
+class ChatImitate(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
