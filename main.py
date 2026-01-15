@@ -15,12 +15,15 @@ class ChatImitate(Star):
         self._stop_event = asyncio.Event()
         self._bg_task: asyncio.Task | None = None
         self._reaction_cache = ReactionCache(ttl_seconds=3600)
+        self._db_init_lock = asyncio.Lock()
 
     async def initialize(self):
         """异步的插件初始化方法，当实例化该插件类之后会自动调用"""
+        logger.debug("chatimitate: initialize start")
         # 初始化数据库，传递插件名称
         from .db import init_db
         await init_db(self.name)
+        logger.debug("chatimitate: initialize db ready")
 
         # 初始化一次全局黑名单
         try:
@@ -48,6 +51,16 @@ class ChatImitate(Star):
             await Chat.sync()
         except Exception:
             logger.warning("chatimitate: final sync failed", exc_info=True)
+
+        # 关闭数据库连接（如果存在）
+        try:
+            from . import db as db_mod
+
+            if getattr(db_mod, "db_manager", None) is not None:
+                await db_mod.db_manager.close()
+                logger.debug("chatimitate: db connection closed")
+        except Exception:
+            logger.debug("chatimitate: db close failed", exc_info=True)
 
 
     async def _periodic_maintenance(self) -> None:
@@ -86,6 +99,20 @@ class ChatImitate(Star):
         if event.get_sender_id() == event.get_self_id():
             return
 
+        # 兜底：如果框架在 initialize 完成前就开始分发消息，做一次惰性初始化。
+        try:
+            from . import db as db_mod
+            from .db import init_db
+
+            if db_mod.db_operations is None:
+                async with self._db_init_lock:
+                    if db_mod.db_operations is None:
+                        logger.warning("chatimitate: db not initialized yet; init lazily")
+                        await init_db(self.name)
+                        logger.debug("chatimitate: lazy db init done")
+        except Exception:
+            logger.warning("chatimitate: lazy db init failed", exc_info=True)
+
         chat = Chat(event, self.config)
 
         # 先学习
@@ -112,6 +139,7 @@ class ChatImitate(Star):
                     raise RuntimeError("duplicate react")
                 for candidate in get_reaction_candidates(raw_message, self.config):
                     try:
+                        logger.debug("chatimitate: react candidate=%s", candidate)
                         await event.react(candidate)
                         if react_key:
                             self._reaction_cache.mark(react_key, time.time())

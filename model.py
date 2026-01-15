@@ -9,7 +9,8 @@ from functools import cached_property, cmp_to_key
 
 import pypinyin
 
-from .db import Answer, Ban, Context, Message as MessageModel, BlackList, db_operations
+from .db import Answer, Ban, Context, Message as MessageModel, BlackList
+from . import db as db_mod
 
 from astrbot.api import logger, AstrBotConfig
 from astrbot.api.event import AstrMessageEvent
@@ -199,6 +200,17 @@ class Chat:
         if len(self.chat_data.raw_message.strip()) == 0:
             return False
 
+        logger.debug(
+            "chatimitate: learn group=%s user=%s is_plain=%s len=%s",
+            self.chat_data.group_id,
+            self.chat_data.user_id,
+            self.chat_data.is_plain_text,
+            len(self.chat_data.plain_text or self.chat_data.raw_message),
+        )
+
+        if db_mod.db_operations is None:
+            logger.debug("chatimitate: db not ready yet; learning in-memory only")
+
         group_id = self.chat_data.group_id
         if group_id in Chat._message_dict:
             group_msgs = Chat._message_dict[group_id]
@@ -228,6 +240,13 @@ class Chat:
         # 不回复太短的对话，大部分是“？”、“草”
         if self.chat_data.is_plain_text and len(self.chat_data.plain_text) < 2:
             return None
+
+        logger.debug(
+            "chatimitate: answer attempt group=%s bot=%s keywords=%s",
+            self.chat_data.group_id,
+            self.chat_data.bot_id,
+            self.chat_data.keywords,
+        )
 
         # # 不要一直回复同一个内容
         # if self.chat_data.raw_message == latest_reply['pre_raw_message']:
@@ -405,6 +424,7 @@ class Chat:
                     and cur_raw_message not in recently  # noqa: B023
                     and not cur_raw_message.startswith("bot")
                     and not cur_raw_message.startswith("[CQ:xml")
+                    and not ("[CQ:" not in cur_raw_message and cur_raw_message.strip().isdigit())
                     and "\n" not in cur_raw_message
                 )
 
@@ -413,9 +433,9 @@ class Chat:
                 continue
 
             taken_user_id = None
-            if db_operations is not None:
+            if db_mod.db_operations is not None:
                 try:
-                    bot_cfg = await db_operations.get_bot_config(int(bot_id))
+                    bot_cfg = await db_mod.db_operations.get_bot_config(int(bot_id))
                     if bot_cfg and bot_cfg.taken_name:
                         taken_user_id = bot_cfg.taken_name.get(int(group_id))
                 except Exception:
@@ -509,7 +529,11 @@ class Chat:
         pre_keywords = reply["pre_keywords"]
         keywords = reply["reply_keywords"]
 
-        context_to_ban = await db_operations.get_context(pre_keywords)
+        if db_mod.db_operations is None:
+            logger.debug("chatimitate: ban skipped (db not initialized)")
+            return False
+
+        context_to_ban = await db_mod.db_operations.get_context(pre_keywords)
         if context_to_ban:
             ban_reason = Ban(
                 keywords=keywords,
@@ -518,7 +542,7 @@ class Chat:
                 time=int(time.time()),
             )
             context_to_ban.ban.append(ban_reason)
-            await db_operations.save_context(context_to_ban)
+            await db_mod.db_operations.save_context(context_to_ban)
 
         if keywords in Chat._blacklist_answer_reserve[group_id]:
             Chat._blacklist_answer[group_id].add(keywords)
@@ -596,7 +620,7 @@ class Chat:
         """
 
         # 检查db_operations是否已初始化
-        if db_operations is None:
+        if db_mod.db_operations is None:
             logger.warning("db_operations尚未初始化，跳过消息同步")
             return
 
@@ -620,10 +644,14 @@ class Chat:
             Chat._late_save_time = cur_time
 
         for msg in save_list:
-            await db_operations.save_message(msg)
+            await db_mod.db_operations.save_message(msg)
 
     async def _context_insert(self, pre_msg: MessageModel | None):
         if not pre_msg:
+            return
+
+        if db_mod.db_operations is None:
+            logger.debug("chatimitate: _context_insert skipped (db not initialized)")
             return
 
         raw_message = self.chat_data.raw_message
@@ -641,7 +669,7 @@ class Chat:
         pre_keywords = pre_msg.keywords
         cur_time = self.chat_data.time
 
-        context = await db_operations.get_context(pre_keywords)
+        context = await db_mod.db_operations.get_context(pre_keywords)
         if context:
             answer_index = next(
                 (
@@ -668,7 +696,7 @@ class Chat:
                 )
             context.time = cur_time
             context.trigger_count += 1
-            await db_operations.save_context(context)
+            await db_mod.db_operations.save_context(context)
 
         else:
             context = Context(
@@ -685,7 +713,7 @@ class Chat:
                     )
                 ],
             )
-            await db_operations.save_context(context)
+            await db_mod.db_operations.save_context(context)
 
     async def _context_find(self) -> tuple[list[str], str] | None:
         group_id = self.chat_data.group_id
@@ -716,7 +744,15 @@ class Chat:
                     # 复读过一次就不再回复这句话了
                     return None
 
-        context = await db_operations.get_context(keywords)
+        if db_mod.db_operations is None:
+            logger.debug(
+                "chatimitate: _context_find skipped (db not initialized) group=%s bot=%s",
+                group_id,
+                bot_id,
+            )
+            return None
+
+        context = await db_mod.db_operations.get_context(keywords)
 
         if not context:
             return None
@@ -786,6 +822,9 @@ class Chat:
                 continue
             if "\n" in sample_msg:
                 continue
+            # 避免历史遗留：有些端会把 reaction 的 face-id 当作普通文本发出（例如 240/272）
+            if "[CQ:" not in sample_msg and sample_msg.strip().isdigit():
+                continue
             if count < 3 and sample_msg in recent_message:  # 别人刚发的就重复，显得很笨
                 continue
 
@@ -822,6 +861,12 @@ class Chat:
         answer_keywords = final_answer.keywords
         answer_str = answer_str.removeprefix("bot")
 
+        logger.debug(
+            "chatimitate: selected answer keywords=%s msg_preview=%s",
+            answer_keywords,
+            (answer_str[:60] + "…") if len(answer_str) > 60 else answer_str,
+        )
+
         if (
             0 < answer_str.count("，") <= 3
             and "[CQ:" not in answer_str
@@ -856,13 +901,13 @@ class Chat:
         # 注意：这种方法在群组数量很多时可能效率较低，但通常黑名单数据量不大
         
         # 检查db_operations是否已初始化
-        if db_operations is None:
+        if db_mod.db_operations is None:
             logger.warning("db_operations尚未初始化，跳过黑名单选择")
             return
         
         # 获取所有已知群组的黑名单
         for group_id in list(Chat._blacklist_answer.keys()) + list(Chat._blacklist_answer_reserve.keys()):
-            blacklist = await db_operations.get_blacklist(group_id)
+            blacklist = await db_mod.db_operations.get_blacklist(group_id)
             if blacklist:
                 if blacklist.answers:
                     Chat._blacklist_answer[group_id] |= set(blacklist.answers)
@@ -872,7 +917,7 @@ class Chat:
     @staticmethod
     async def _sync_blacklist() -> None:
         # 检查db_operations是否已初始化
-        if db_operations is None:
+        if db_mod.db_operations is None:
             logger.warning("db_operations尚未初始化，跳过黑名单同步")
             return
         
@@ -886,7 +931,7 @@ class Chat:
                 answers=list(answers),
                 answers_reserve=[]
             )
-            await db_operations.save_blacklist(blacklist)
+            await db_mod.db_operations.save_blacklist(blacklist)
 
         for group_id, answers_set in Chat._blacklist_answer_reserve.items():
             if not len(answers_set):
@@ -896,7 +941,7 @@ class Chat:
                 filtered_answers = answers_set - Chat._blacklist_answer[group_id]
 
             # 获取现有的黑名单配置
-            existing_blacklist = await db_operations.get_blacklist(group_id)
+            existing_blacklist = await db_mod.db_operations.get_blacklist(group_id)
             if existing_blacklist:
                 # 合并现有的answers和新的answers_reserve
                 blacklist = BlackList(
@@ -910,7 +955,7 @@ class Chat:
                     answers=[],
                     answers_reserve=list(filtered_answers)
                 )
-            await db_operations.save_blacklist(blacklist)
+            await db_mod.db_operations.save_blacklist(blacklist)
 
     @staticmethod
     async def clearup_context() -> None:
@@ -921,11 +966,11 @@ class Chat:
         cur_time = int(time.time())
         expiration = cur_time - 15 * 24 * 3600  # 15 天前
 
-        if db_operations is None:
+        if db_mod.db_operations is None:
             logger.warning("db 未初始化，跳过清理操作")
             return
 
-        conn = await db_operations.db.get_connection()
+        conn = await db_mod.db_operations.db.get_connection()
 
         # SQLite 版本：
         # 1) 删除 15 天无人触发、且未学会（没有可用答案）的 context
