@@ -283,8 +283,9 @@ def choose_reaction_emoji(
 def get_reaction_candidates(raw_message: str | None, config: Any) -> list[str]:
     """Return reaction candidates in priority order.
 
-    QQ/NapCat/OneBot 场景下，`event.react()` 很多实现更偏向“emoji id”(数字字符串)。
-    因此默认优先返回 face-id（同款优先），最后再回退到 unicode emoji。
+    兼容 QQ/NapCat/OneBot：
+    - 这里返回“可直接发送/可解析”的候选（CQ face 段 / unicode）。
+    - 避免返回纯数字 face-id：部分适配器会把数字当作普通文本发出去，导致 bot 莫名其妙发“240/272”。
 
     Config keys:
     - reply_with_same_emoji (bool): 有同款 face 时优先用同款
@@ -298,14 +299,14 @@ def get_reaction_candidates(raw_message: str | None, config: Any) -> list[str]:
 
     candidates: list[str] = []
 
-    # 1) 同款优先：从消息里提取 CQ face id，优先用 id 字符串
+    # 1) 同款优先：从消息里提取 CQ face id
     if prefer_same and raw_message:
         face_ids = extract_cq_face_ids(raw_message)
         if face_ids:
-            candidates.append(str(random.choice(face_ids)))
+            candidates.append(format_cq_face(random.choice(face_ids)))
 
-    # 2) QQ 兼容：随机一个 face id（数字字符串）
-    candidates.append(str(get_random_face_id()))
+    # 2) 随机一个 CQ face
+    candidates.append(format_cq_face(get_random_face_id()))
 
     # 3) Unicode 回退（有些端支持更好）
     if enable_unicode_fallback:
