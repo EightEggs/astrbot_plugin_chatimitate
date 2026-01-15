@@ -104,9 +104,10 @@ class Chat:
     SAVE_TIME_THRESHOLD: int
     SAVE_COUNT_THRESHOLD: int
     SAVE_RESERVED_SIZE: int
-    BLACKLIST_FLAG: int
-    SPEAK_FLAG: str
-    REPLY_FLAG: str
+    
+    BLACKLIST_FLAG: int = 114514
+    SPEAK_FLAG: str = "[Bot: Speak]"
+    REPLY_FLAG: str = "[Bot: Reply]"
 
     def __init__(self, data: ChatData | AstrMessageEvent, plugin_config: AstrBotConfig) -> None:
         if isinstance(data, ChatData):
@@ -164,9 +165,8 @@ class Chat:
                 Chat.ANSWER_THRESHOLD + 1,
             )
         )
-        Chat.BLACKLIST_FLAG = 114514
-        Chat.SPEAK_FLAG = "[PallasBot: Speak]"
-        Chat.REPLY_FLAG = "[PallasBot: Reply]"
+        
+        # 这些常量已经在类级别定义，无需重复赋值
 
     # 运行期变量
 
@@ -595,6 +595,11 @@ class Chat:
         持久化
         """
 
+        # 检查db_operations是否已初始化
+        if db_operations is None:
+            logger.warning("db_operations尚未初始化，跳过消息同步")
+            return
+
         async with Chat._message_lock:
             save_list = [
                 msg
@@ -850,6 +855,11 @@ class Chat:
         # 这里我们通过获取所有群组的黑名单来实现类似功能
         # 注意：这种方法在群组数量很多时可能效率较低，但通常黑名单数据量不大
         
+        # 检查db_operations是否已初始化
+        if db_operations is None:
+            logger.warning("db_operations尚未初始化，跳过黑名单选择")
+            return
+        
         # 获取所有已知群组的黑名单
         for group_id in list(Chat._blacklist_answer.keys()) + list(Chat._blacklist_answer_reserve.keys()):
             blacklist = await db_operations.get_blacklist(group_id)
@@ -861,6 +871,11 @@ class Chat:
 
     @staticmethod
     async def _sync_blacklist() -> None:
+        # 检查db_operations是否已初始化
+        if db_operations is None:
+            logger.warning("db_operations尚未初始化，跳过黑名单同步")
+            return
+        
         await Chat._select_blacklist()
 
         for group_id, answers in Chat._blacklist_answer.items():
@@ -997,37 +1012,3 @@ class Chat:
     async def sync():
         await Chat._sync()
         await Chat._sync_blacklist()
-
-
-if __name__ == "__main__":
-    Chat.clearup_context()
-    while True:
-        test_data: ChatData = ChatData(
-            group_id=1234567,
-            user_id=1111111,
-            raw_message="完了又有新bug",
-            plain_text="完了又有新bug",
-            time=time.time(),
-            bot_id=0,
-        )
-
-        test_chat: Chat = Chat(test_data)
-
-        print(test_chat.answer())
-        test_chat.learn()
-
-        test_answer_data: ChatData = ChatData(
-            group_id=1234567,
-            user_id=1111111,
-            raw_message="完了又有新bug",
-            plain_text="完了又有新bug",
-            time=time.time(),
-            bot_id=0,
-        )
-
-        test_answer: Chat = Chat(test_answer_data)
-        print(test_chat.answer())
-        test_answer.learn()
-
-        time.sleep(5)
-        print(Chat.speak())
