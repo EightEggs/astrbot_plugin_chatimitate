@@ -9,8 +9,7 @@ from functools import cached_property, cmp_to_key
 
 import pypinyin
 
-from .db import Answer, Ban, Context, Message as MessageModel, BlackList
-from . import db as db_mod
+from .db import Answer, Ban, Context, Message as MessageModel, BlackList, db_operations
 
 from astrbot.api import logger, AstrBotConfig
 from astrbot.api.event import AstrMessageEvent
@@ -208,7 +207,7 @@ class Chat:
             len(self.chat_data.plain_text or self.chat_data.raw_message),
         )
 
-        if db_mod.db_operations is None:
+        if db_operations is None:
             logger.debug("chatimitate: db not ready yet; learning in-memory only")
 
         group_id = self.chat_data.group_id
@@ -433,9 +432,9 @@ class Chat:
                 continue
 
             taken_user_id = None
-            if db_mod.db_operations is not None:
+            if db_operations is not None:
                 try:
-                    bot_cfg = await db_mod.db_operations.get_bot_config(int(bot_id))
+                    bot_cfg = await db_operations.get_bot_config(int(bot_id))
                     if bot_cfg and bot_cfg.taken_name:
                         taken_user_id = bot_cfg.taken_name.get(int(group_id))
                 except Exception:
@@ -529,11 +528,11 @@ class Chat:
         pre_keywords = reply["pre_keywords"]
         keywords = reply["reply_keywords"]
 
-        if db_mod.db_operations is None:
+        if db_operations is None:
             logger.debug("chatimitate: ban skipped (db not initialized)")
             return False
 
-        context_to_ban = await db_mod.db_operations.get_context(pre_keywords)
+        context_to_ban = await db_operations.get_context(pre_keywords)
         if context_to_ban:
             ban_reason = Ban(
                 keywords=keywords,
@@ -542,7 +541,7 @@ class Chat:
                 time=int(time.time()),
             )
             context_to_ban.ban.append(ban_reason)
-            await db_mod.db_operations.save_context(context_to_ban)
+            await db_operations.save_context(context_to_ban)
 
         if keywords in Chat._blacklist_answer_reserve[group_id]:
             Chat._blacklist_answer[group_id].add(keywords)
@@ -620,7 +619,7 @@ class Chat:
         """
 
         # 检查db_operations是否已初始化
-        if db_mod.db_operations is None:
+        if db_operations is None:
             logger.warning("db_operations尚未初始化，跳过消息同步")
             return
 
@@ -644,13 +643,13 @@ class Chat:
             Chat._late_save_time = cur_time
 
         for msg in save_list:
-            await db_mod.db_operations.save_message(msg)
+            await db_operations.save_message(msg)
 
     async def _context_insert(self, pre_msg: MessageModel | None):
         if not pre_msg:
             return
 
-        if db_mod.db_operations is None:
+        if db_operations is None:
             logger.debug("chatimitate: _context_insert skipped (db not initialized)")
             return
 
@@ -669,7 +668,7 @@ class Chat:
         pre_keywords = pre_msg.keywords
         cur_time = self.chat_data.time
 
-        context = await db_mod.db_operations.get_context(pre_keywords)
+        context = await db_operations.get_context(pre_keywords)
         if context:
             answer_index = next(
                 (
@@ -696,7 +695,7 @@ class Chat:
                 )
             context.time = cur_time
             context.trigger_count += 1
-            await db_mod.db_operations.save_context(context)
+            await db_operations.save_context(context)
 
         else:
             context = Context(
@@ -713,7 +712,7 @@ class Chat:
                     )
                 ],
             )
-            await db_mod.db_operations.save_context(context)
+            await db_operations.save_context(context)
 
     async def _context_find(self) -> tuple[list[str], str] | None:
         group_id = self.chat_data.group_id
@@ -744,7 +743,7 @@ class Chat:
                     # 复读过一次就不再回复这句话了
                     return None
 
-        if db_mod.db_operations is None:
+        if db_operations is None:
             logger.debug(
                 "chatimitate: _context_find skipped (db not initialized) group=%s bot=%s",
                 group_id,
@@ -752,7 +751,7 @@ class Chat:
             )
             return None
 
-        context = await db_mod.db_operations.get_context(keywords)
+        context = await db_operations.get_context(keywords)
 
         if not context:
             return None
@@ -901,13 +900,13 @@ class Chat:
         # 注意：这种方法在群组数量很多时可能效率较低，但通常黑名单数据量不大
         
         # 检查db_operations是否已初始化
-        if db_mod.db_operations is None:
+        if db_operations is None:
             logger.warning("db_operations尚未初始化，跳过黑名单选择")
             return
         
         # 获取所有已知群组的黑名单
         for group_id in list(Chat._blacklist_answer.keys()) + list(Chat._blacklist_answer_reserve.keys()):
-            blacklist = await db_mod.db_operations.get_blacklist(group_id)
+            blacklist = await db_operations.get_blacklist(group_id)
             if blacklist:
                 if blacklist.answers:
                     Chat._blacklist_answer[group_id] |= set(blacklist.answers)
@@ -917,7 +916,7 @@ class Chat:
     @staticmethod
     async def _sync_blacklist() -> None:
         # 检查db_operations是否已初始化
-        if db_mod.db_operations is None:
+        if db_operations is None:
             logger.warning("db_operations尚未初始化，跳过黑名单同步")
             return
         
@@ -931,7 +930,7 @@ class Chat:
                 answers=list(answers),
                 answers_reserve=[]
             )
-            await db_mod.db_operations.save_blacklist(blacklist)
+            await db_operations.save_blacklist(blacklist)
 
         for group_id, answers_set in Chat._blacklist_answer_reserve.items():
             if not len(answers_set):
@@ -941,7 +940,7 @@ class Chat:
                 filtered_answers = answers_set - Chat._blacklist_answer[group_id]
 
             # 获取现有的黑名单配置
-            existing_blacklist = await db_mod.db_operations.get_blacklist(group_id)
+            existing_blacklist = await db_operations.get_blacklist(group_id)
             if existing_blacklist:
                 # 合并现有的answers和新的answers_reserve
                 blacklist = BlackList(
@@ -955,7 +954,7 @@ class Chat:
                     answers=[],
                     answers_reserve=list(filtered_answers)
                 )
-            await db_mod.db_operations.save_blacklist(blacklist)
+            await db_operations.save_blacklist(blacklist)
 
     @staticmethod
     async def clearup_context() -> None:
@@ -966,11 +965,11 @@ class Chat:
         cur_time = int(time.time())
         expiration = cur_time - 15 * 24 * 3600  # 15 天前
 
-        if db_mod.db_operations is None:
+        if db_operations is None:
             logger.warning("db 未初始化，跳过清理操作")
             return
 
-        conn = await db_mod.db_operations.db.get_connection()
+        conn = await db_operations.db.get_connection()
 
         # SQLite 版本：
         # 1) 删除 15 天无人触发、且未学会（没有可用答案）的 context

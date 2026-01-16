@@ -36,9 +36,6 @@ class ChatImitate(Star):
 
     async def terminate(self):
         """异步的插件销毁方法，当插件被卸载/停用时会自动调用"""
-
-
-
         self._stop_event.set()
         if self._bg_task is not None:
             self._bg_task.cancel()
