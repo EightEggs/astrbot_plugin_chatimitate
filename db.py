@@ -173,30 +173,30 @@ class DatabaseManager:
 
 # 数据模型类
 class BotConfig(BaseModel):
-    account: int
-    admins: List[int] = Field(default_factory=list)
+    account: str
+    admins: List[str] = Field(default_factory=list)
     auto_accept: bool = False
     security: bool = False
-    taken_name: Dict[int, int] = Field(default_factory=dict)
+    taken_name: Dict[str, str] = Field(default_factory=dict)
     disabled_plugins: List[str] = Field(default_factory=list)
 
 
 class GroupConfig(BaseModel):
-    group_id: int
+    group_id: str
     roulette_mode: int = 1
     banned: bool = False
     disabled_plugins: List[str] = Field(default_factory=list)
 
 
 class UserConfig(BaseModel):
-    user_id: int
+    user_id: str
     banned: bool = False
 
 
 class Message(BaseModel):
-    group_id: int
-    user_id: int
-    bot_id: int
+    group_id: str
+    user_id: str
+    bot_id: str
     raw_message: str
     is_plain_text: bool = True
     plain_text: str
@@ -206,14 +206,14 @@ class Message(BaseModel):
 
 class Ban(BaseModel):
     keywords: str
-    group_id: int
+    group_id: str
     reason: str
     time: int = Field(default_factory=lambda: int(time.time()))
 
 
 class Answer(BaseModel):
     keywords: str
-    group_id: int
+    group_id: str
     count: int = 1
     time: int = Field(default_factory=lambda: int(time.time()))
     messages: List[str] = Field(default_factory=list)
@@ -230,7 +230,7 @@ class Context(BaseModel):
 
 
 class BlackList(BaseModel):
-    group_id: int
+    group_id: str
     answers: List[str] = Field(default_factory=list)
     answers_reserve: List[str] = Field(default_factory=list)
 
@@ -259,14 +259,14 @@ class DatabaseOperations:
         return None
     
     # BotConfig操作
-    async def get_bot_config(self, account: int) -> Optional[BotConfig]:
+    async def get_bot_config(self, account: str) -> Optional[BotConfig]:
         """获取机器人配置"""
         conn = await self.db.get_connection()
         async with conn.execute("SELECT * FROM bot_config WHERE account = ?", (account,)) as cursor:
             row = await cursor.fetchone()
             if row:
                 return BotConfig(
-                    account=row['account'],
+                    account=str(row['account']),
                     admins=self._json_deserialize(row['admins']),
                     auto_accept=bool(row['auto_accept']),
                     security=bool(row['security']),
@@ -293,14 +293,14 @@ class DatabaseOperations:
         await conn.commit()
     
     # GroupConfig操作
-    async def get_group_config(self, group_id: int) -> Optional[GroupConfig]:
+    async def get_group_config(self, group_id: str) -> Optional[GroupConfig]:
         """获取群组配置"""
         conn = await self.db.get_connection()
         async with conn.execute("SELECT * FROM group_config WHERE group_id = ?", (group_id,)) as cursor:
             row = await cursor.fetchone()
             if row:
                 return GroupConfig(
-                    group_id=row['group_id'],
+                    group_id=str(row['group_id']),
                     roulette_mode=row['roulette_mode'],
                     banned=bool(row['banned']),
                     disabled_plugins=self._json_deserialize(row['disabled_plugins'])
@@ -323,14 +323,14 @@ class DatabaseOperations:
         await conn.commit()
     
     # UserConfig操作
-    async def get_user_config(self, user_id: int) -> Optional[UserConfig]:
+    async def get_user_config(self, user_id: str) -> Optional[UserConfig]:
         """获取用户配置"""
         conn = await self.db.get_connection()
         async with conn.execute("SELECT * FROM user_config WHERE user_id = ?", (user_id,)) as cursor:
             row = await cursor.fetchone()
             if row:
                 return UserConfig(
-                    user_id=row['user_id'],
+                    user_id=str(row['user_id']),
                     banned=bool(row['banned'])
                 )
         return None
@@ -374,9 +374,9 @@ class DatabaseOperations:
             messages = []
             for row in rows:
                 messages.append(Message(
-                    group_id=row['group_id'],
-                    user_id=row['user_id'],
-                    bot_id=row['bot_id'],
+                    group_id=str(row['group_id']),
+                    user_id=str(row['user_id']),
+                    bot_id=str(row['bot_id']),
                     raw_message=row['raw_message'],
                     is_plain_text=bool(row['is_plain_text']),
                     plain_text=row['plain_text'],
@@ -402,7 +402,7 @@ class DatabaseOperations:
             async for row in cursor:
                 answers.append(Answer(
                     keywords=row['keywords'],
-                    group_id=row['group_id'],
+                    group_id=str(row['group_id']),
                     count=row['count'],
                     time=row['time'],
                     messages=self._json_deserialize(row['messages']),
@@ -415,7 +415,7 @@ class DatabaseOperations:
             async for row in cursor:
                 bans.append(Ban(
                     keywords=row['keywords'],
-                    group_id=row['group_id'],
+                    group_id=str(row['group_id']),
                     reason=row['reason'],
                     time=row['time']
                 ))
@@ -471,14 +471,14 @@ class DatabaseOperations:
         await conn.commit()
     
     # BlackList操作
-    async def get_blacklist(self, group_id: int) -> Optional[BlackList]:
+    async def get_blacklist(self, group_id: str) -> Optional[BlackList]:
         """获取黑名单"""
         conn = await self.db.get_connection()
         async with conn.execute("SELECT * FROM blacklist WHERE group_id = ?", (group_id,)) as cursor:
             row = await cursor.fetchone()
             if row:
                 return BlackList(
-                    group_id=row['group_id'],
+                    group_id=str(row['group_id']),
                     answers=self._json_deserialize(row['answers']),
                     answers_reserve=self._json_deserialize(row['answers_reserve'])
                 )

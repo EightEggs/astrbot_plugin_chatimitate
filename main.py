@@ -94,19 +94,6 @@ class ChatImitate(Star):
         if event.get_sender_id() == event.get_self_id():
             return
 
-        # 兜底：如果框架在 initialize 完成前就开始分发消息，做一次惰性初始化。
-        try:
-            from . import db as db_mod
-
-            if db_mod.db_operations is None:
-                async with self._db_init_lock:
-                    if db_mod.db_operations is None:
-                        logger.warning("chatimitate: db not initialized yet; init lazily")
-                        await init_db(self.name)
-                        logger.debug("chatimitate: lazy db init done")
-        except Exception:
-            logger.warning("chatimitate: lazy db init failed", exc_info=True)
-
         chat = Chat(event, self.config)
 
         # 先学习

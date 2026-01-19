@@ -180,7 +180,7 @@ class Chat:
     _reply_dict = defaultdict(
         lambda: defaultdict(list)
     )  # 回复的消息缓存，暂未做持久化
-    _message_dict: dict[int, list[MessageModel]] = defaultdict(list)  # 群消息缓存
+    _message_dict: dict[str, list[MessageModel]] = defaultdict(list)  # 群消息缓存
 
     _reply_lock = asyncio.Lock()  # 回复消息缓存锁
     _message_lock = asyncio.Lock()
@@ -203,10 +203,7 @@ class Chat:
         学习这句话
         """
 
-        if len(self.chat_data.raw_message.strip()) == 0:
-            return False
-
-        logger.debug(
+        logger.info(
             "chatimitate: learn group=%s user=%s is_plain=%s len=%s",
             self.chat_data.group_id,
             self.chat_data.user_id,
@@ -214,9 +211,12 @@ class Chat:
             len(self.chat_data.plain_text or self.chat_data.raw_message),
         )
 
+        if len(self.chat_data.raw_message.strip()) == 0:
+            return False
+
         if db.db_operations is None:
-            logger.warning("chatimitate: db not ready yet; learning in-memory only")
-            return
+            logger.error("chatimitate: db not initialized")
+            return False
 
         group_id = self.chat_data.group_id
         if group_id in Chat._message_dict:
@@ -310,9 +310,8 @@ class Chat:
                     Chat._recent_topics[group_id] += [
                         k
                         for k in self.chat_data._keywords_list
-                        if not k.startswith("bot")  # type: ignore
                     ]
-                yield AstrBotMessage(item)
+                yield AstrBotMessage(item) # TODO: fix "应为0个位置参数"
 
             async with Chat._reply_lock:
                 group_bot_replies = group_bot_replies[-Chat.SAVE_RESERVED_SIZE :]
@@ -321,7 +320,7 @@ class Chat:
 
     @staticmethod
     async def reply_post_proc(
-        raw_message: str, new_msg: str, bot_id: int, group_id: int
+        raw_message: str, new_msg: str, bot_id: str, group_id: str
     ) -> bool:
         """
         对 bot 回复的消息进行后处理，将缓存替换为处理后的消息
@@ -341,7 +340,7 @@ class Chat:
     @staticmethod
     async def speak(
         plugin_config: AstrBotConfig | None = None,
-    ) -> tuple[int, int, list[AstrBotMessage], int | None] | None:
+    ) -> tuple[str, str, list[AstrBotMessage], str | None] | None:
         """
         主动发言，返回当前最希望发言的 bot 账号、群号、发言消息 List、戳一戳目标，也有可能不发言
         """
@@ -350,7 +349,7 @@ class Chat:
         basic_delay = 600
 
         def group_popularity_cmp(
-            lhs: tuple[int, list[MessageModel]], rhs: tuple[int, list[MessageModel]]
+            lhs: tuple[str, list[MessageModel]], rhs: tuple[str, list[MessageModel]]
         ) -> int:
             def cmp(a: int | float, b: int | float) -> int:
                 return (a > b) - (a < b)
@@ -443,9 +442,9 @@ class Chat:
             if db.db_operations is not None:
                 # 获取机器人配置
                 try:
-                    bot_cfg = await db.db_operations.get_bot_config(int(bot_id))
+                    bot_cfg = await db.db_operations.get_bot_config(bot_id)
                     if bot_cfg and bot_cfg.taken_name:
-                        taken_user_id = bot_cfg.taken_name.get(int(group_id))
+                        taken_user_id = bot_cfg.taken_name.get(group_id)
                 except Exception:
                     taken_user_id = None
 
@@ -469,7 +468,7 @@ class Chat:
                     }
                 )
 
-            speak_list: list[AstrBotMessage] = [AstrBotMessage(speak)]
+            speak_list: list[AstrBotMessage] = [AstrBotMessage(speak)] # TODO: fix "应为0个位置参数"
 
             # 连续主动说话（可选）：需要传入 plugin_config，否则不做链式回复
             if plugin_config is not None:
@@ -479,7 +478,7 @@ class Chat:
                 ):
                     pre_msg = str(speak_list[-1])
                     answer_generator = await Chat(
-                        ChatData(group_id, 0, pre_msg, pre_msg, int(cur_time), str(bot_id)),
+                        ChatData(group_id, '0', pre_msg, pre_msg, int(cur_time), str(bot_id)),
                         plugin_config,
                     ).answer()
                     if not answer_generator:
@@ -501,7 +500,7 @@ class Chat:
 
     @staticmethod
     async def ban(
-        group_id: int, bot_id: int, ban_raw_message: str, reason: str
+        group_id: str, bot_id: str, ban_raw_message: str, reason: str
     ) -> bool:
         """
         禁止以后回复这句话，仅对该群有效果
@@ -562,14 +561,14 @@ class Chat:
         return True
 
     @staticmethod
-    async def get_random_message_from_each_group() -> dict[int, MessageModel]:
+    async def get_random_message_from_each_group() -> dict[str, MessageModel]:
         """
         获取每个群近期一条随机发言
 
         TODO: 随机权重可以改为 keywords 出现频率 或 用户发言频率 正相关
         """
 
-        result: dict[int, MessageModel] = {}
+        result: dict[str, MessageModel] = {}
 
         for group_id, group_msgs in Chat._message_dict.items():
             if not group_msgs:
@@ -607,7 +606,7 @@ class Chat:
         if self.chat_data.is_plain_text:
             async with Chat._topics_lock:
                 Chat._recent_topics[group_id] += [
-                    k for k in self.chat_data._keywords_list if not k.startswith("bot")
+                    k for k in self.chat_data._keywords_list
                 ]
 
         cur_time = self.chat_data.time
@@ -795,7 +794,7 @@ class Chat:
                 topics = Chat._recent_topics[group_id]
                 for key in answer_key.split(" "):
                     if key in topics:
-                        answer._topical += topics.count(key)
+                        answer.topical += topics.count(key)
 
             if answer_key not in dst:
                 dst[answer_key] = answer
@@ -859,7 +858,7 @@ class Chat:
             return None
 
         weights = [
-            min(answer.count, 10) + answer._topical * Chat.TOPICS_IMPORTANCE
+            min(answer.count, 10) + answer.topical * Chat.TOPICS_IMPORTANCE
             for answer in candidate_answers.values()
         ]
         final_answer = random.choices(
@@ -1037,7 +1036,7 @@ class Chat:
             raise
 
     @staticmethod
-    async def _find_ban_keywords(context: Context | None, group_id) -> set:
+    async def _find_ban_keywords(context: Context | None, group_id: str) -> set:
         """
         找到在 group_id 群中对应 context 不能回复的关键词
         """
