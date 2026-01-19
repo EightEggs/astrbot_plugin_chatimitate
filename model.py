@@ -208,7 +208,7 @@ class Chat:
         )
 
         if db_operations is None:
-            logger.debug("chatimitate: db not ready yet; learning in-memory only")
+            logger.warning("chatimitate: db not ready yet; learning in-memory only")
 
         group_id = self.chat_data.group_id
         if group_id in Chat._message_dict:

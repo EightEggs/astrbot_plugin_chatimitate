@@ -532,22 +532,21 @@ db_operations = None
 async def init_db(plugin_name: str = "astrbot_plugin_chatimitate"):
     """初始化数据库"""
     global db_manager, db_operations
-
-    logger.debug("chatimitate: init_db start plugin_name=%s", plugin_name)
     
     # 创建数据库管理器实例
     db_manager = DatabaseManager(plugin_name)
-    db_operations = DatabaseOperations(db_manager)
-
-    try:
-        logger.debug("chatimitate: db path=%s", str(db_manager.db_path))
-    except Exception:
-        pass
-    
-    # 初始化数据库表
     await db_manager.initialize()
+    if db_manager is None:
+        logger.error("chatimitate: initialize db_manager failed")
+        return
+    
+    # 创建数据库操作实例
+    db_operations = DatabaseOperations(db_manager)
+    if db_operations is None:
+        logger.error("chatimitate: initialize db_operations failed")
+        return
 
-    logger.debug("chatimitate: init_db done")
+    logger.info("chatimitate: init_db done")
 
 
 __all__ = [

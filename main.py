@@ -5,6 +5,7 @@ import time
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 from astrbot.api import logger, AstrBotConfig
+from .db import init_db
 from .model import Chat
 
 class ChatImitate(Star):
@@ -17,11 +18,10 @@ class ChatImitate(Star):
 
     async def initialize(self):
         """异步的插件初始化方法，当实例化该插件类之后会自动调用"""
-        logger.debug("chatimitate: initialize start")
-        # 初始化数据库，传递插件名称
-        from .db import init_db
+        logger.info("chatimitate: initialize start")
+
         await init_db(self.name)
-        logger.debug("chatimitate: initialize db ready")
+        logger.info("chatimitate: initialize db ready")
 
         # 初始化一次全局黑名单
         try:
@@ -97,7 +97,6 @@ class ChatImitate(Star):
         # 兜底：如果框架在 initialize 完成前就开始分发消息，做一次惰性初始化。
         try:
             from . import db as db_mod
-            from .db import init_db
 
             if db_mod.db_operations is None:
                 async with self._db_init_lock:
