@@ -14,6 +14,8 @@ from . import db
 
 from astrbot.api import logger, AstrBotConfig
 from astrbot.api.event import AstrMessageEvent
+from astrbot.api.star import StarTools
+from astrbot.core.platform.astrbot_message import AstrBotMessage
 
 import jieba_next.analyse as jieba_analyse
 
@@ -195,7 +197,6 @@ class Chat:
         lambda: deque(maxlen=Chat.DUPLICATE_REPLY)
     )  # 主动发言记录，避免重复内容
 
-    ###
 
     async def learn(self) -> bool:
         """
@@ -247,7 +248,7 @@ class Chat:
         if self.chat_data.is_plain_text and len(self.chat_data.plain_text) < 2:
             return None
 
-        logger.debug(
+        logger.info(
             "chatimitate: answer attempt group=%s bot=%s keywords=%s",
             self.chat_data.group_id,
             self.chat_data.bot_id,
@@ -660,14 +661,14 @@ class Chat:
             logger.debug("chatimitate: _context_insert skipped (db not initialized)")
             return
 
-        raw_message = self.chat_data.raw_message
+        plain_text = self.chat_data.plain_text
 
         # 在复读，不学
-        if pre_msg.raw_message == raw_message:
+        if pre_msg.plain_text == plain_text:
             return
 
         # 回复别人的，不学
-        if "[CQ:reply," in raw_message:
+        if "[CQ:reply," in plain_text:
             return
 
         keywords = self.chat_data.keywords
@@ -689,7 +690,7 @@ class Chat:
                 context.answers[answer_index].count += 1
                 context.answers[answer_index].time = cur_time
                 if self.chat_data.is_plain_text:
-                    context.answers[answer_index].messages.append(raw_message)
+                    context.answers[answer_index].messages.append(plain_text)
             else:
                 context.answers.append(
                     Answer(
@@ -697,7 +698,7 @@ class Chat:
                         group_id=group_id,
                         count=1,
                         time=cur_time,
-                        messages=[raw_message],
+                        messages=[plain_text],
                     )
                 )
             context.time = cur_time
@@ -715,7 +716,7 @@ class Chat:
                         group_id=group_id,
                         count=1,
                         time=cur_time,
-                        messages=[raw_message],
+                        messages=[plain_text],
                     )
                 ],
             )
@@ -723,7 +724,7 @@ class Chat:
 
     async def _context_find(self) -> tuple[list[str], str] | None:
         group_id = self.chat_data.group_id
-        raw_message = self.chat_data.raw_message
+        plain_text = self.chat_data.plain_text
         keywords = self.chat_data.keywords
         bot_id = self.chat_data.bot_id
 
@@ -731,18 +732,18 @@ class Chat:
         if group_id in Chat._message_dict:
             group_msgs = Chat._message_dict[group_id]
             if len(group_msgs) >= Chat.REPEAT_THRESHOLD and all(
-                item.raw_message == raw_message
+                item.plain_text == plain_text
                 for item in group_msgs[-Chat.REPEAT_THRESHOLD + 1 :]
             ):
                 # 到这里说明当前群里是在复读
                 group_bot_replies = Chat._reply_dict[group_id][bot_id]
                 if (
                     len(group_bot_replies)
-                    and group_bot_replies[-1]["reply"] != raw_message
+                    and group_bot_replies[-1]["reply"] != plain_text
                 ):
                     return (
                         [
-                            raw_message,
+                            plain_text,
                         ],
                         keywords,
                     )
@@ -867,7 +868,7 @@ class Chat:
         answer_keywords = final_answer.keywords
         answer_str = answer_str.removeprefix("bot")
 
-        logger.debug(
+        logger.info(
             "chatimitate: selected answer keywords=%s msg_preview=%s",
             answer_keywords,
             (answer_str[:60] + "…") if len(answer_str) > 60 else answer_str,

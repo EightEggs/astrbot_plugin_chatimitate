@@ -3,8 +3,10 @@ import random
 import time
 
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.api import logger, AstrBotConfig
+from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.message.components import Plain
 from .db import init_db
 from .model import Chat
 
@@ -12,16 +14,18 @@ class ChatImitate(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        self.context = context
         self._stop_event = asyncio.Event()
         self._bg_task: asyncio.Task | None = None
         self._db_init_lock = asyncio.Lock()
 
     async def initialize(self):
         """异步的插件初始化方法，当实例化该插件类之后会自动调用"""
-        logger.info("chatimitate: initialize start")
+
+        # 初始化StarTools，保存Context引用
+        StarTools.initialize(self.context)
 
         await init_db(self.name)
-        logger.info("chatimitate: initialize db ready")
 
         # 初始化一次全局黑名单
         try:
@@ -51,7 +55,7 @@ class ChatImitate(Star):
         try:
             from . import db as db_mod
 
-            if getattr(db_mod, "db_manager", None) is not None:
+            if db_mod.db_manager:
                 await db_mod.db_manager.close()
                 logger.debug("chatimitate: db connection closed")
         except Exception:
@@ -113,7 +117,6 @@ class ChatImitate(Star):
             return
 
         async for msg in answers:
-            # str 通常可直接发送
-            # TODO: 处理plain_text以外的消息类型
-            yield event.plain_result(msg)
+            message_chain = MessageChain([Plain(msg)])
+            await StarTools.send_message(event.session, message_chain)
             await asyncio.sleep(random.randint(1, 3))

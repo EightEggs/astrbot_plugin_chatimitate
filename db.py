@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from pydantic import BaseModel, Field
-from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+from astrbot.core.star.star_tools import StarTools
 from astrbot.api import logger
 
 
@@ -13,13 +13,12 @@ class DatabaseManager:
     """异步SQLite数据库管理器"""
     
     def __init__(self, plugin_name: str = "astrbot_plugin_chatimitate"):
-        # 获取AstrBot数据目录并构建插件数据路径
-        data_path_str = get_astrbot_data_path()
-        plugin_data_path = Path(data_path_str) / "plugin_data" / plugin_name
-        plugin_data_path.mkdir(parents=True, exist_ok=True)
+        # 获取插件数据路径
+        data_path = StarTools.get_data_dir(plugin_name)
+        data_path.mkdir(parents=True, exist_ok=True)
         
         # 设置数据库文件路径
-        self.db_path = plugin_data_path / "chatimitate.db"
+        self.db_path = data_path / "chatimitate.db"
         self._connection = None
     
     async def get_connection(self) -> aiosqlite.Connection:
