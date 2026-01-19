@@ -90,25 +90,34 @@ class ChatData:
 
 
 class Chat:
-    ANSWER_THRESHOLD: int
-    ANSWER_THRESHOLD_WEIGHTS: list[int]
-    TOPICS_SIZE: int
-    TOPICS_IMPORTANCE: int
-    CROSS_GROUP_THRESHOLD: int
-    REPEAT_THRESHOLD: int
-    SPEAK_THRESHOLD: int
-    DUPLICATE_REPLY: int
-    SPLIT_PROBABILITY: float
-    SPEAK_CONTINUOUSLY_PROBABILITY: float
-    SPEAK_POKE_PROBABILITY: float
-    SPEAK_CONTINUOUSLY_MAX_LEN: int
-    SAVE_TIME_THRESHOLD: int
-    SAVE_COUNT_THRESHOLD: int
-    SAVE_RESERVED_SIZE: int
+    # 类属性默认值
+    ANSWER_THRESHOLD: int = 3
+    ANSWER_THRESHOLD_WEIGHTS: list[int] = [7, 23, 70]
+    TOPICS_SIZE: int = 16
+    TOPICS_IMPORTANCE: int = 10000
+    CROSS_GROUP_THRESHOLD: int = 2
+    REPEAT_THRESHOLD: int = 3
+    SPEAK_THRESHOLD: int = 5
+    DUPLICATE_REPLY: int = 10
+    SPLIT_PROBABILITY: float = 0.5
+    SPEAK_CONTINUOUSLY_PROBABILITY: float = 0.5
+    SPEAK_POKE_PROBABILITY: float = 0.6
+    SPEAK_CONTINUOUSLY_MAX_LEN: int = 2
+    SAVE_TIME_THRESHOLD: int = 3600
+    SAVE_COUNT_THRESHOLD: int = 1000
+    SAVE_RESERVED_SIZE: int = 100
     
     BLACKLIST_FLAG: int = 114514
     SPEAK_FLAG: str = "[Bot: Speak]"
     REPLY_FLAG: str = "[Bot: Reply]"
+    
+    # 计算属性
+    ANSWER_THRESHOLD_CHOICE_LIST = list(
+        range(
+            ANSWER_THRESHOLD - len(ANSWER_THRESHOLD_WEIGHTS) + 1,
+            ANSWER_THRESHOLD + 1,
+        )
+    )
 
     def __init__(self, data: ChatData | AstrMessageEvent, plugin_config: AstrBotConfig) -> None:
         if isinstance(data, ChatData):
@@ -134,40 +143,37 @@ class Chat:
 
         # 这些参数会被大量 classmethod/staticmethod 引用，因此必须写到类属性上
         # 同时做容错：配置缺失时使用默认值
-        Chat.ANSWER_THRESHOLD = getattr(self.config, "answer_threshold", 3)
+        Chat.ANSWER_THRESHOLD = getattr(self.config, "answer_threshold", Chat.ANSWER_THRESHOLD)
         Chat.ANSWER_THRESHOLD_WEIGHTS = getattr(
-            self.config, "answer_threshold_weights", [7, 23, 70]
+            self.config, "answer_threshold_weights", Chat.ANSWER_THRESHOLD_WEIGHTS
         )
-        Chat.TOPICS_SIZE = getattr(self.config, "topics_size", 16)
-        Chat.TOPICS_IMPORTANCE = getattr(self.config, "topics_importance", 10000)
-        Chat.CROSS_GROUP_THRESHOLD = getattr(self.config, "cross_group_threshold", 2)
-        Chat.REPEAT_THRESHOLD = getattr(self.config, "repeat_threshold", 3)
-        Chat.SPEAK_THRESHOLD = getattr(self.config, "speak_threshold", 5)
-        Chat.DUPLICATE_REPLY = getattr(self.config, "duplicate_reply", 10)
+        Chat.TOPICS_SIZE = getattr(self.config, "topics_size", Chat.TOPICS_SIZE)
+        Chat.TOPICS_IMPORTANCE = getattr(self.config, "topics_importance", Chat.TOPICS_IMPORTANCE)
+        Chat.CROSS_GROUP_THRESHOLD = getattr(self.config, "cross_group_threshold", Chat.CROSS_GROUP_THRESHOLD)
+        Chat.REPEAT_THRESHOLD = getattr(self.config, "repeat_threshold", Chat.REPEAT_THRESHOLD)
+        Chat.SPEAK_THRESHOLD = getattr(self.config, "speak_threshold", Chat.SPEAK_THRESHOLD)
+        Chat.DUPLICATE_REPLY = getattr(self.config, "duplicate_reply", Chat.DUPLICATE_REPLY)
 
-        Chat.SPLIT_PROBABILITY = getattr(self.config, "split_probability", 0.5)
+        Chat.SPLIT_PROBABILITY = getattr(self.config, "split_probability", Chat.SPLIT_PROBABILITY)
         Chat.SPEAK_CONTINUOUSLY_PROBABILITY = getattr(
-            self.config, "speak_continuously_probability", 0.5
+            self.config, "speak_continuously_probability", Chat.SPEAK_CONTINUOUSLY_PROBABILITY
         )
-        Chat.SPEAK_POKE_PROBABILITY = getattr(self.config, "speak_poke_probability", 0.6)
+        Chat.SPEAK_POKE_PROBABILITY = getattr(self.config, "speak_poke_probability", Chat.SPEAK_POKE_PROBABILITY)
         Chat.SPEAK_CONTINUOUSLY_MAX_LEN = getattr(
-            self.config, "speak_continuously_max_len", 2
+            self.config, "speak_continuously_max_len", Chat.SPEAK_CONTINUOUSLY_MAX_LEN
         )
 
-        Chat.SAVE_TIME_THRESHOLD = getattr(self.config, "save_time_threshold", 3600)
-        Chat.SAVE_COUNT_THRESHOLD = getattr(self.config, "save_count_threshold", 1000)
-        Chat.SAVE_RESERVED_SIZE = getattr(self.config, "save_reserved_size", 100)
+        Chat.SAVE_TIME_THRESHOLD = getattr(self.config, "save_time_threshold", Chat.SAVE_TIME_THRESHOLD)
+        Chat.SAVE_COUNT_THRESHOLD = getattr(self.config, "save_count_threshold", Chat.SAVE_COUNT_THRESHOLD)
+        Chat.SAVE_RESERVED_SIZE = getattr(self.config, "save_reserved_size", Chat.SAVE_RESERVED_SIZE)
 
-    # 最好别动的参数
-
+        # 更新计算属性
         Chat.ANSWER_THRESHOLD_CHOICE_LIST = list(
             range(
                 Chat.ANSWER_THRESHOLD - len(Chat.ANSWER_THRESHOLD_WEIGHTS) + 1,
                 Chat.ANSWER_THRESHOLD + 1,
             )
         )
-        
-        # 这些常量已经在类级别定义，无需重复赋值
 
     # 运行期变量
 
