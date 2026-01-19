@@ -113,6 +113,7 @@ class ChatImitate(Star):
             return
 
         async for msg in answers:
-            # AstrBotMessage -> str 通常可直接发送（NapCat/OneBot CQ 码兼容）
-            yield event.plain_result(str(msg))
+            # str 通常可直接发送
+            # TODO: 处理plain_text以外的消息类型
+            yield event.plain_result(msg)
             await asyncio.sleep(random.randint(1, 3))

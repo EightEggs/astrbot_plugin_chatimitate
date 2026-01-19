@@ -14,7 +14,6 @@ from . import db
 
 from astrbot.api import logger, AstrBotConfig
 from astrbot.api.event import AstrMessageEvent
-from astrbot.core.platform.astrbot_message import AstrBotMessage
 
 import jieba_next.analyse as jieba_analyse
 
@@ -240,7 +239,7 @@ class Chat:
         await self._message_insert()
         return True
 
-    async def answer(self) -> AsyncGenerator[AstrBotMessage, None] | None:
+    async def answer(self) -> AsyncGenerator[str, None] | None:
         """
         回复这句话，可能会分多次回复，也可能不回复
         """
@@ -285,7 +284,7 @@ class Chat:
 
         async def yield_results(
             results: tuple[list[str], str],
-        ) -> AsyncGenerator[AstrBotMessage, None]:
+        ) -> AsyncGenerator[str, None]:
             answer_list, answer_keywords = results
             group_bot_replies = Chat._reply_dict[group_id][bot_id]
             for item in answer_list:
@@ -311,7 +310,7 @@ class Chat:
                         k
                         for k in self.chat_data._keywords_list
                     ]
-                yield AstrBotMessage(item) # TODO: fix "应为0个位置参数"
+                yield item
 
             async with Chat._reply_lock:
                 group_bot_replies = group_bot_replies[-Chat.SAVE_RESERVED_SIZE :]
@@ -340,7 +339,7 @@ class Chat:
     @staticmethod
     async def speak(
         plugin_config: AstrBotConfig | None = None,
-    ) -> tuple[str, str, list[AstrBotMessage], str | None] | None:
+    ) -> tuple[str, str, list[str], str | None] | None:
         """
         主动发言，返回当前最希望发言的 bot 账号、群号、发言消息 List、戳一戳目标，也有可能不发言
         """
@@ -468,7 +467,7 @@ class Chat:
                     }
                 )
 
-            speak_list: list[AstrBotMessage] = [AstrBotMessage(speak)] # TODO: fix "应为0个位置参数"
+            speak_list: list[str] = [speak]
 
             # 连续主动说话（可选）：需要传入 plugin_config，否则不做链式回复
             if plugin_config is not None:
