@@ -1,4 +1,9 @@
 {
+    "debug_message_format": {
+        "description": "调试模式：输出完整消息结构到日志（仅用于调试，生产环境请关闭）",
+        "type": "bool",
+        "default": false
+    },
     "answer_threshold": {
         "description": "回答阈值，值越大，回复越精准；值越小，回复越频繁",
         "type": "int",

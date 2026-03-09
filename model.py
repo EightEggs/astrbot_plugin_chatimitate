@@ -1,4 +1,5 @@
 import asyncio
+import json
 import random
 import re
 import time
@@ -7,17 +8,35 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from functools import cached_property, cmp_to_key
 
+import jieba_next.analyse as jieba_analyse
 import pypinyin
 
-from .db import Answer, Ban, Context, Message as MessageModel, BlackList
-from . import db
-
-from astrbot.api import logger, AstrBotConfig
+from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent
-from astrbot.api.star import StarTools
-from astrbot.core.platform.astrbot_message import AstrBotMessage
+from astrbot.core.message.components import Face, Image, Plain
 
-import jieba_next.analyse as jieba_analyse
+from . import db
+from .db import Answer, Ban, BlackList, Context
+from .db import Message as MessageModel
+
+
+def _safe_serialize(obj):
+    """Safely serialize an object to a JSON-compatible format."""
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _safe_serialize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_safe_serialize(item) for item in obj]
+    if hasattr(obj, "__dict__"):
+        result = {"_type": type(obj).__name__}
+        for key, value in vars(obj).items():
+            if not key.startswith("_"):
+                result[key] = _safe_serialize(value) # noqa: E701
+        return result
+    return str(obj)
 
 
 @dataclass
@@ -80,7 +99,9 @@ class ChatData:
         # 兼容：\n  - [CQ:at,qq=123]
         #       - [CQ:at,qq=123,name=xxx]
         #       - [CQ:at,qq=all]
-        if re.search(rf"\[CQ:at,qq=({re.escape(bot_id)}|all)(?:,[^\]]*)?\]", self.raw_message):
+        if re.search(
+            rf"\[CQ:at,qq=({re.escape(bot_id)}|all)(?:,[^\]]*)?\]", self.raw_message
+        ):
             return True
 
         # 兼容旧逻辑：用“bot...”作为呼叫前缀
@@ -91,7 +112,7 @@ class ChatData:
 
 
 class Chat:
-    # 类属性默认值
+    DEBUG_MESSAGE_FORMAT: bool = False
     ANSWER_THRESHOLD: int = 3
     ANSWER_THRESHOLD_WEIGHTS: list[int] = [7, 23, 70]
     TOPICS_SIZE: int = 16
@@ -107,11 +128,11 @@ class Chat:
     SAVE_TIME_THRESHOLD: int = 3600
     SAVE_COUNT_THRESHOLD: int = 1000
     SAVE_RESERVED_SIZE: int = 100
-    
+
     BLACKLIST_FLAG: int = 114514
     SPEAK_FLAG: str = "[Bot: Speak]"
     REPLY_FLAG: str = "[Bot: Reply]"
-    
+
     # 计算属性
     ANSWER_THRESHOLD_CHOICE_LIST = list(
         range(
@@ -120,53 +141,92 @@ class Chat:
         )
     )
 
-    def __init__(self, data: ChatData | AstrMessageEvent, plugin_config: AstrBotConfig) -> None:
+    def __init__(
+        self, data: ChatData | AstrMessageEvent, plugin_config: AstrBotConfig
+    ) -> None:
+        Chat.DEBUG_MESSAGE_FORMAT = (
+            getattr(self.config, "debug_message_format", Chat.DEBUG_MESSAGE_FORMAT)
+            if hasattr(self, "config")
+            else getattr(
+                plugin_config, "debug_message_format", Chat.DEBUG_MESSAGE_FORMAT
+            )
+        )
+
         if isinstance(data, ChatData):
             self.chat_data = data
             self.config = plugin_config
-            logger.info(f"Chat initialized with data: {self.chat_data} and config: {self.config}")
+            logger.info(
+                f"Chat initialized with data: {self.chat_data} and config: {self.config}"
+            )
 
         elif isinstance(data, AstrMessageEvent):
+            self.config = plugin_config
+
+            if Chat.DEBUG_MESSAGE_FORMAT:
+                self._log_message_structure(data)
+
+            plain_text, raw_message = self._extract_message_content(data)
+
             self.chat_data = ChatData(
                 group_id=data.get_group_id(),
                 user_id=data.get_sender_id(),
-                # 删除图片子类型字段，同一张图子类型经常不一样，影响判断
-                raw_message=re.sub(r"\.image,.+?\]", ".image]", str(data.message_obj.raw_message)),
-                plain_text=data.get_message_str(),
+                raw_message=raw_message,
+                plain_text=plain_text,
                 time=data.message_obj.timestamp,
                 bot_id=data.get_self_id(),
             )
-            self.config = plugin_config
-        
-       
 
         # 可以试着改改的参数
 
         # 这些参数会被大量 classmethod/staticmethod 引用，因此必须写到类属性上
         # 同时做容错：配置缺失时使用默认值
-        Chat.ANSWER_THRESHOLD = getattr(self.config, "answer_threshold", Chat.ANSWER_THRESHOLD)
+        Chat.ANSWER_THRESHOLD = getattr(
+            self.config, "answer_threshold", Chat.ANSWER_THRESHOLD
+        )
         Chat.ANSWER_THRESHOLD_WEIGHTS = getattr(
             self.config, "answer_threshold_weights", Chat.ANSWER_THRESHOLD_WEIGHTS
         )
         Chat.TOPICS_SIZE = getattr(self.config, "topics_size", Chat.TOPICS_SIZE)
-        Chat.TOPICS_IMPORTANCE = getattr(self.config, "topics_importance", Chat.TOPICS_IMPORTANCE)
-        Chat.CROSS_GROUP_THRESHOLD = getattr(self.config, "cross_group_threshold", Chat.CROSS_GROUP_THRESHOLD)
-        Chat.REPEAT_THRESHOLD = getattr(self.config, "repeat_threshold", Chat.REPEAT_THRESHOLD)
-        Chat.SPEAK_THRESHOLD = getattr(self.config, "speak_threshold", Chat.SPEAK_THRESHOLD)
-        Chat.DUPLICATE_REPLY = getattr(self.config, "duplicate_reply", Chat.DUPLICATE_REPLY)
-
-        Chat.SPLIT_PROBABILITY = getattr(self.config, "split_probability", Chat.SPLIT_PROBABILITY)
-        Chat.SPEAK_CONTINUOUSLY_PROBABILITY = getattr(
-            self.config, "speak_continuously_probability", Chat.SPEAK_CONTINUOUSLY_PROBABILITY
+        Chat.TOPICS_IMPORTANCE = getattr(
+            self.config, "topics_importance", Chat.TOPICS_IMPORTANCE
         )
-        Chat.SPEAK_POKE_PROBABILITY = getattr(self.config, "speak_poke_probability", Chat.SPEAK_POKE_PROBABILITY)
+        Chat.CROSS_GROUP_THRESHOLD = getattr(
+            self.config, "cross_group_threshold", Chat.CROSS_GROUP_THRESHOLD
+        )
+        Chat.REPEAT_THRESHOLD = getattr(
+            self.config, "repeat_threshold", Chat.REPEAT_THRESHOLD
+        )
+        Chat.SPEAK_THRESHOLD = getattr(
+            self.config, "speak_threshold", Chat.SPEAK_THRESHOLD
+        )
+        Chat.DUPLICATE_REPLY = getattr(
+            self.config, "duplicate_reply", Chat.DUPLICATE_REPLY
+        )
+
+        Chat.SPLIT_PROBABILITY = getattr(
+            self.config, "split_probability", Chat.SPLIT_PROBABILITY
+        )
+        Chat.SPEAK_CONTINUOUSLY_PROBABILITY = getattr(
+            self.config,
+            "speak_continuously_probability",
+            Chat.SPEAK_CONTINUOUSLY_PROBABILITY,
+        )
+        Chat.SPEAK_POKE_PROBABILITY = getattr(
+            self.config, "speak_poke_probability", Chat.SPEAK_POKE_PROBABILITY
+        )
         Chat.SPEAK_CONTINUOUSLY_MAX_LEN = getattr(
             self.config, "speak_continuously_max_len", Chat.SPEAK_CONTINUOUSLY_MAX_LEN
         )
 
-        Chat.SAVE_TIME_THRESHOLD = getattr(self.config, "save_time_threshold", Chat.SAVE_TIME_THRESHOLD)
-        Chat.SAVE_COUNT_THRESHOLD = getattr(self.config, "save_count_threshold", Chat.SAVE_COUNT_THRESHOLD)
-        Chat.SAVE_RESERVED_SIZE = getattr(self.config, "save_reserved_size", Chat.SAVE_RESERVED_SIZE)
+        Chat.SAVE_TIME_THRESHOLD = getattr(
+            self.config, "save_time_threshold", Chat.SAVE_TIME_THRESHOLD
+        )
+        Chat.SAVE_COUNT_THRESHOLD = getattr(
+            self.config, "save_count_threshold", Chat.SAVE_COUNT_THRESHOLD
+        )
+        Chat.SAVE_RESERVED_SIZE = getattr(
+            self.config, "save_reserved_size", Chat.SAVE_RESERVED_SIZE
+        )
 
         # 更新计算属性
         Chat.ANSWER_THRESHOLD_CHOICE_LIST = list(
@@ -176,11 +236,109 @@ class Chat:
             )
         )
 
+    def _log_message_structure(self, event: AstrMessageEvent) -> None:
+        """Log the complete message object structure for debugging purposes."""
+        try:
+            message_obj = event.message_obj
+
+            log_data = {
+                "message_id": getattr(message_obj, "message_id", "N/A"),
+                "self_id": getattr(message_obj, "self_id", "N/A"),
+                "session_id": getattr(message_obj, "session_id", "N/A"),
+                "timestamp": getattr(message_obj, "timestamp", "N/A"),
+                "message_str": getattr(message_obj, "message_str", "N/A"),
+                "raw_message_type": type(message_obj.raw_message).__name__,
+                "raw_message_preview": str(message_obj.raw_message)[:500]
+                if message_obj.raw_message
+                else None,
+                "sender": _safe_serialize(getattr(message_obj, "sender", None)),
+                "group": _safe_serialize(getattr(message_obj, "group", None)),
+            }
+
+            message_chain = getattr(message_obj, "message", [])
+            chain_info = []
+            for idx, comp in enumerate(message_chain):
+                comp_info = {
+                    "index": idx,
+                    "type": type(comp).__name__,
+                    "component_type": getattr(comp, "type", None).__str__()
+                    if hasattr(comp, "type")
+                    else "N/A",
+                }
+                if isinstance(comp, Plain):
+                    comp_info["text"] = comp.text[:200] if comp.text else ""
+                elif isinstance(comp, Image):
+                    comp_info["file"] = comp.file[:100] if comp.file else ""
+                    comp_info["url"] = comp.url[:100] if comp.url else ""
+                elif isinstance(comp, Face):
+                    comp_info["id"] = comp.id
+                chain_info.append(comp_info)
+
+            log_data["message_chain"] = chain_info
+            log_data["message_chain_length"] = len(message_chain)
+
+            logger.info(
+                "chatimitate DEBUG: Message structure:\n%s",
+                json.dumps(log_data, ensure_ascii=False, indent=2),
+            )
+        except Exception as e:
+            logger.warning("chatimitate DEBUG: Failed to log message structure: %s", e)
+
+    def _extract_message_content(self, event: AstrMessageEvent) -> tuple[str, str]:
+        """Extract plain text and raw message content from the event.
+
+        Returns:
+            tuple[str, str]: (plain_text, raw_message)
+                - plain_text: Pure text content without metadata
+                - raw_message: Formatted message string including images
+        """
+        plain_text_parts = []
+        raw_message_parts = []
+
+        message_chain = event.get_messages()
+
+        if not message_chain:
+            plain_text = event.get_message_str() or ""
+            raw_message = (
+                str(event.message_obj.raw_message)
+                if event.message_obj.raw_message
+                else plain_text
+            )
+            return plain_text, raw_message
+
+        for comp in message_chain:
+            if isinstance(comp, Plain):
+                text = comp.text.strip()
+                if text:
+                    plain_text_parts.append(text)
+                    raw_message_parts.append(text)
+            elif isinstance(comp, Image):
+                image_url = comp.url or comp.file or ""
+                if image_url:
+                    normalized_url = re.sub(r"\.image,.+?\]", ".image]", image_url)
+                    raw_message_parts.append(f"[CQ:image,file={normalized_url}]")
+            elif isinstance(comp, Face):
+                raw_message_parts.append(f"[CQ:face,id={comp.id}]")
+
+        plain_text = " ".join(plain_text_parts)
+        raw_message = "".join(raw_message_parts)
+
+        if not raw_message:
+            raw_message = (
+                str(event.message_obj.raw_message)
+                if event.message_obj.raw_message
+                else ""
+            )
+            raw_message = re.sub(r"\.image,.+?\]", ".image]", raw_message)
+
+        if not plain_text:
+            plain_text = event.get_message_str() or ""
+
+        return plain_text, raw_message
+
     # 运行期变量
 
-    _reply_dict = defaultdict(
-        lambda: defaultdict(list)
-    )  # 回复的消息缓存，暂未做持久化
+    _reply_dict = defaultdict(lambda: defaultdict(list))  # 回复的消息缓存，暂未做持久化
     _message_dict: dict[str, list[MessageModel]] = defaultdict(list)  # 群消息缓存
 
     _reply_lock = asyncio.Lock()  # 回复消息缓存锁
@@ -196,7 +354,6 @@ class Chat:
     _recent_speak = defaultdict(
         lambda: deque(maxlen=Chat.DUPLICATE_REPLY)
     )  # 主动发言记录，避免重复内容
-
 
     async def learn(self) -> bool:
         """
@@ -308,8 +465,7 @@ class Chat:
                         ]
                 async with Chat._topics_lock:
                     Chat._recent_topics[group_id] += [
-                        k
-                        for k in self.chat_data._keywords_list
+                        k for k in self.chat_data._keywords_list
                     ]
                 yield item
 
@@ -430,7 +586,10 @@ class Chat:
                     and cur_raw_message not in recently  # noqa: B023
                     and not cur_raw_message.startswith("bot")
                     and not cur_raw_message.startswith("[CQ:xml")
-                    and not ("[CQ:" not in cur_raw_message and cur_raw_message.strip().isdigit())
+                    and not (
+                        "[CQ:" not in cur_raw_message
+                        and cur_raw_message.strip().isdigit()
+                    )
                     and "\n" not in cur_raw_message
                 )
 
@@ -449,7 +608,9 @@ class Chat:
                     taken_user_id = None
 
             pretend_msg = (
-                list(filter(lambda msg: msg.user_id == taken_user_id, available_messages))
+                list(
+                    filter(lambda msg: msg.user_id == taken_user_id, available_messages)
+                )
                 if taken_user_id is not None
                 else []
             )
@@ -478,7 +639,9 @@ class Chat:
                 ):
                     pre_msg = str(speak_list[-1])
                     answer_generator = await Chat(
-                        ChatData(group_id, '0', pre_msg, pre_msg, int(cur_time), str(bot_id)),
+                        ChatData(
+                            group_id, "0", pre_msg, pre_msg, int(cur_time), str(bot_id)
+                        ),
                         plugin_config,
                     ).answer()
                     if not answer_generator:
@@ -581,7 +744,10 @@ class Chat:
                 user_count[msg.user_id] += 1
 
             # 正相关：某关键词/某用户越常出现，其发言越容易被抽到
-            weights = [1 + keywords_count[m.keywords] + user_count[m.user_id] for m in group_msgs]
+            weights = [
+                1 + keywords_count[m.keywords] + user_count[m.user_id]
+                for m in group_msgs
+            ]
             result[group_id] = random.choices(group_msgs, weights=weights, k=1)[0]
 
         return result
@@ -906,20 +1072,24 @@ class Chat:
         # 由于SQLite不支持find_all()，我们需要手动获取所有黑名单数据
         # 这里我们通过获取所有群组的黑名单来实现类似功能
         # 注意：这种方法在群组数量很多时可能效率较低，但通常黑名单数据量不大
-        
+
         # 检查db_operations是否已初始化
         if db.db_operations is None:
             logger.warning("db_operations尚未初始化，跳过黑名单选择")
             return
-        
+
         # 获取所有已知群组的黑名单
-        for group_id in list(Chat._blacklist_answer.keys()) + list(Chat._blacklist_answer_reserve.keys()):
+        for group_id in list(Chat._blacklist_answer.keys()) + list(
+            Chat._blacklist_answer_reserve.keys()
+        ):
             blacklist = await db.db_operations.get_blacklist(group_id)
             if blacklist:
                 if blacklist.answers:
                     Chat._blacklist_answer[group_id] |= set(blacklist.answers)
                 if blacklist.answers_reserve:
-                    Chat._blacklist_answer_reserve[group_id] |= set(blacklist.answers_reserve)
+                    Chat._blacklist_answer_reserve[group_id] |= set(
+                        blacklist.answers_reserve
+                    )
 
     @staticmethod
     async def _sync_blacklist() -> None:
@@ -927,16 +1097,14 @@ class Chat:
         if db.db_operations is None:
             logger.warning("db_operations尚未初始化，跳过黑名单同步")
             return
-        
+
         await Chat._select_blacklist()
 
         for group_id, answers in Chat._blacklist_answer.items():
             if not len(answers):
                 continue
             blacklist = BlackList(
-                group_id=group_id,
-                answers=list(answers),
-                answers_reserve=[]
+                group_id=group_id, answers=list(answers), answers_reserve=[]
             )
             await db.db_operations.save_blacklist(blacklist)
 
@@ -954,13 +1122,13 @@ class Chat:
                 blacklist = BlackList(
                     group_id=group_id,
                     answers=existing_blacklist.answers,
-                    answers_reserve=list(filtered_answers)
+                    answers_reserve=list(filtered_answers),
                 )
             else:
                 blacklist = BlackList(
                     group_id=group_id,
                     answers=[],
-                    answers_reserve=list(filtered_answers)
+                    answers_reserve=list(filtered_answers),
                 )
             await db.db_operations.save_blacklist(blacklist)
 
