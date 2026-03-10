@@ -1,82 +1,72 @@
 {
     "debug_message_format": {
-        "description": "调试模式：输出完整消息结构到日志（仅用于调试，生产环境请关闭）",
+        "description": "【调试开关】是否输出详细调试日志。开启后会在日志中打印每条消息的完整结构，仅建议在调试问题时临时开启，日常使用请关闭",
         "type": "bool",
         "default": false
     },
     "answer_threshold": {
-        "description": "回答阈值，值越大，回复越精准；值越小，回复越频繁",
+        "description": "【回复频率】触发回复所需的最小学习次数。数值越小回复越频繁（容易乱回复），数值越大回复越谨慎（可能错过回复）。建议范围：2-5",
         "type": "int",
         "default": 3
     },
     "answer_threshold_weights": {
-        "description": "回答阈值权重，用于随机选择回答阈值",
+        "description": "【回复频率权重】配合上一个配置使用，控制回复频率的随机性。三个数字分别代表「低频率」「中频率」「高频率」的权重比例。默认 [7, 23, 70] 表示 70% 概率使用高频率回复",
         "type": "list",
         "default": [7, 23, 70]
     },
     "topics_size": {
-        "description": "每个群聊记录的关键词数量，用于上下文联想",
+        "description": "【上下文记忆】每个群聊保留的最近话题关键词数量。数值越大越能记住之前的聊天内容，但可能降低回复相关性。建议范围：10-20",
         "type": "int",
         "default": 16
     },
     "topics_importance": {
-        "description": "上下文命中时的额外权重系数",
+        "description": "【上下文权重】当回复内容与最近话题相关时，增加的额外权重。数值越大越优先回复与当前话题相关的内容",
         "type": "int",
         "default": 10000
     },
     "cross_group_threshold": {
-        "description": "跨群回复阈值，达到此数量的群有相同回复时，将作为全局回复",
+        "description": "【跨群学习】同一个回复在多少个不同的群中出现时，将其作为全局通用回复。数值越小越容易学习到其他群的聊天内容",
         "type": "int",
         "default": 2
     },
     "repeat_threshold": {
-        "description": "复读阈值，群内连续相同发言达到此数量时触发复读",
+        "description": "【复读检测】群内连续出现多少次相同消息时触发复读。设置为 3 表示当连续 3 个人说同样的话时，机器人也会跟着复读",
         "type": "int",
         "default": 3
     },
-    "speak_threshold": {
-        "description": "主动发言阈值，值越小，主动发言越频繁",
-        "type": "int",
-        "default": 5
-    },
     "duplicate_reply": {
-        "description": "重复回复间隔，避免短时间内重复相同内容",
+        "description": "【防重复】检查最近多少条回复内是否有重复内容。数值越大越不容易重复，但可能导致回复过于谨慎",
         "type": "int",
         "default": 10
     },
     "split_probability": {
-        "description": "按逗号分割回复的概率",
+        "description": "【回复分割】当回复内容包含逗号时，有多大几率只发送逗号前的一半。0.5 表示 50% 的概率会分割，让回复更自然",
         "type": "float",
         "default": 0.5
-    },
-    "speak_continuously_probability": {
-        "description": "连续主动说话的概率",
-        "type": "float",
-        "default": 0.5
-    },
-    "speak_poke_probability": {
-        "description": "主动说话时随机戳一戳群友的概率",
-        "type": "float",
-        "default": 0.6
-    },
-    "speak_continuously_max_len": {
-        "description": "连续主动说话的最大句子数",
-        "type": "int",
-        "default": 2
     },
     "save_time_threshold": {
-        "description": "消息持久化时间阈值（秒）",
+        "description": "【自动保存】每隔多少秒将内存中的聊天记录保存到数据库。数值越小数据越安全，但频繁写入可能影响性能",
         "type": "int",
         "default": 3600
     },
     "save_count_threshold": {
-        "description": "单个群聊消息持久化数量阈值",
+        "description": "【自动保存】每个群聊积累多少条消息后触发保存。与上一个配置任一条件满足即触发保存",
         "type": "int",
         "default": 1000
     },
     "save_reserved_size": {
-        "description": "内存中保留的消息数量",
+        "description": "【内存限制】每个群聊在内存中保留多少条最新消息。超出的消息会被清理，但已保存到数据库的记录不受影响",
         "type": "int",
         "default": 100
+    },
+    "enable_image_learning": {
+        "description": "【图片学习】是否允许机器人学习和回复图片消息。开启后会学习群友发送的图片，并在适当时机回复之前出现过的图片",
+        "type": "bool",
+        "default": true
+    },
+    "image_similarity_threshold": {
+        "description": "【图片去重】判断两张图片是否相同的阈值。数值越大要求越严格，0.8 表示 80% 相似就认为是同一张图",
+        "type": "float",
+        "default": 0.8
     }
 }
