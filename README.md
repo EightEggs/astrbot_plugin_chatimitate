@@ -5,7 +5,7 @@
 
 # astrbot_plugin_chatimitate
 
-_✨ 不用AI，胜过AI ✨_  
+_✨ 在 LLM 时代，回归模仿的初心 ✨_  
 
 [![License](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0.html)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -17,7 +17,7 @@ _✨ 不用AI，胜过AI ✨_
 
 ## 🤝 介绍
 
-本插件受 [Pallas-Bot](<https://github.com/PallasBot/Pallas-Bot>) 项目启发 (部分代码也来自该项目)，旨在让 bot 从群聊记录中学习和模仿人类聊天，而不是使用AI生成内容。
+本插件受 [Pallas-Bot](<https://github.com/PallasBot/Pallas-Bot>) 项目启发 (部分代码也来自该项目)，旨在让 bot 从群聊记录中**基于关键词地**学习和模仿人类聊天，而不是使用 LLM 生成内容
 
 
 ## 📦 安装
@@ -32,7 +32,7 @@ _✨ 不用AI，胜过AI ✨_
 
 ## 📌 注意事项
 
-- 本插件目前仅在 [NapCat](https://github.com/NapNeko/NapCatQQ) 协议端以及 `Astrbot>=4.9` 测试通过，其他协议端和版本可能会存在一些不兼容问题（以具体情况为准）
+- 本插件目前仅在 [NapCat](https://github.com/NapNeko/NapCatQQ) 协议端以及 `Astrbot>=4.12` 测试通过，其他协议端和版本可能会存在一些不兼容问题（以具体情况为准）
 - 本插件的输出完全依赖于学习到的聊天记录，因此对于插件输出的内容，管理员有责任进行审核和把控
 
 ## 👥 贡献指南
