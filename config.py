@@ -50,9 +50,6 @@ class ChatImitateConfig:
         self.enable_image_learning: bool = media_config.get(
             "enable_image_learning", True
         )
-        self.image_similarity_threshold: float = media_config.get(
-            "image_similarity_threshold", 0.8
-        )
 
     @property
     def answer_threshold_choice_list(self) -> list[int]:
@@ -76,9 +73,6 @@ class ChatImitateConfig:
 
         # 验证概率值在合理范围内
         if not 0 <= self.split_probability <= 1:
-            return False
-
-        if not 0 <= self.image_similarity_threshold <= 1:
             return False
 
         # 验证正数配置
