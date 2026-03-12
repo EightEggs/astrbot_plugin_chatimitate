@@ -29,8 +29,12 @@ from astrbot.api.message_components import (
 )
 
 from . import db
-from .db import Answer, Context
-from .db import Message as MessageModel
+from .db import ChatMessage, ReplyContent, TriggerKeyword
+
+# 向后兼容的别名
+MessageModel = ChatMessage
+Answer = ReplyContent
+Context = TriggerKeyword
 
 
 @dataclass
@@ -72,12 +76,21 @@ class ChatData:
     def _keywords_list(self) -> list[str]:
         if not self.is_plain_text and len(self.plain_text) == 0:
             return []
-        return [
-            tag
-            for tag, _ in jieba_analyse.extract_tags(
-                self.plain_text, topK=ChatData._keywords_size
+        try:
+            # jieba_analyse.extract_tags 返回的是 list[tuple[str, float]]
+            # 格式：[('关键词', 权重), ...]
+            keywords = jieba_analyse.extract_tags(
+                self.plain_text, topK=ChatData._keywords_size, withWeight=True
             )
-        ]
+            # 提取关键词部分
+            return [
+                item[0] if isinstance(item, (list, tuple)) else str(item)
+                for item in keywords
+            ]
+        except Exception as e:
+            logger.warning("chatimitate: jieba keyword extraction failed: %s", e)
+            # 如果提取失败，返回整个文本作为关键词
+            return [self.plain_text] if self.plain_text else []
 
     @cached_property
     def keywords_len(self) -> int:
@@ -191,6 +204,33 @@ class ChatStateManager:
 
         self._late_save_time: int = 0
 
+    async def _sync(self, cur_time: int = int(time.time())):
+        """持久化消息到数据库"""
+        if db.db_operations is None:
+            logger.warning("db_operations not initialized, skipping sync")
+            return
+
+        async with self._message_lock:
+            save_list = [
+                msg
+                for group_msgs in self._message_dict.values()
+                for msg in group_msgs
+                if msg.time > self._late_save_time
+            ]
+            if not save_list:
+                return
+
+            new_dict = {
+                group_id: group_msgs[-self.config.save_reserved_size :]
+                for group_id, group_msgs in self._message_dict.items()
+            }
+            self._message_dict.clear()
+            self._message_dict.update(new_dict)
+            self._late_save_time = cur_time
+
+        for msg in save_list:
+            await db.db_operations.save_message(msg)
+
     def get_group_bot_replies(self, group_id: str, bot_id: str) -> list[dict]:
         return self._reply_dict[group_id][bot_id]
 
@@ -227,6 +267,8 @@ class Chat:
         self, data: ChatData | AstrMessageEvent, plugin_config: AstrBotConfig
     ) -> None:
         self.config = ChatConfig(plugin_config)
+        # 使用全局状态管理器
+        self.state = get_global_state_manager(self.config)
 
         if isinstance(data, AstrMessageEvent):
             plain_text, raw_message, message_type, image_info = (
@@ -247,8 +289,6 @@ class Chat:
                 self._log_message_structure(data)
         else:
             self.chat_data = data
-
-        self.state = ChatStateManager(self.config)
 
     def _log_message_structure(self, event: AstrMessageEvent) -> None:
         """记录消息结构用于调试"""
@@ -351,7 +391,9 @@ class Chat:
                     raw_message_parts.append(f"[CQ:record,file={file_path}]")
             elif isinstance(comp, Video):
                 has_video = True
-                file_path = getattr(comp, "file", None) or getattr(comp, "url", None) or ""
+                file_path = (
+                    getattr(comp, "file", None) or getattr(comp, "url", None) or ""
+                )
                 if file_path:
                     raw_message_parts.append(f"[CQ:video,file={file_path}]")
             elif isinstance(comp, File):
@@ -521,36 +563,9 @@ class Chat:
             len(self.state.get_group_messages(group_id))
             > self.config.save_count_threshold
         ):
-            await self._sync(cur_time)
+            await self.state._sync(cur_time)
         elif cur_time - self.state._late_save_time > self.config.save_time_threshold:
-            await self._sync(cur_time)
-
-    async def _sync(self, cur_time: int = int(time.time())):
-        """持久化消息到数据库"""
-        if db.db_operations is None:
-            logger.warning("db_operations not initialized, skipping sync")
-            return
-
-        async with self.state._message_lock:
-            save_list = [
-                msg
-                for group_msgs in self.state._message_dict.values()
-                for msg in group_msgs
-                if msg.time > self.state._late_save_time
-            ]
-            if not save_list:
-                return
-
-            new_dict = {
-                group_id: group_msgs[-self.config.save_reserved_size :]
-                for group_id, group_msgs in self.state._message_dict.items()
-            }
-            self.state._message_dict.clear()
-            self.state._message_dict.update(new_dict)
-            self.state._late_save_time = cur_time
-
-        for msg in save_list:
-            await db.db_operations.save_message(msg)
+            await self.state._sync(cur_time)
 
     async def _context_insert(self, pre_msg: MessageModel | None):
         """插入上下文关系"""
@@ -566,23 +581,23 @@ class Chat:
         pre_keywords = pre_msg.keywords
         cur_time = self.chat_data.time
 
-        context = await db.db_operations.get_context(pre_keywords)
+        context = await db.db_operations.get_trigger_keyword(pre_keywords)
         if context:
             answer_index = next(
                 (
                     idx
-                    for idx, answer in enumerate(context.answers)
+                    for idx, answer in enumerate(context.replies)
                     if answer.group_id == group_id and answer.keywords == keywords
                 ),
                 -1,
             )
             if answer_index != -1:
-                context.answers[answer_index].count += 1
-                context.answers[answer_index].time = cur_time
+                context.replies[answer_index].count += 1
+                context.replies[answer_index].time = cur_time
                 if self.chat_data.is_plain_text:
-                    context.answers[answer_index].messages.append(plain_text)
+                    context.replies[answer_index].messages.append(plain_text)
             else:
-                context.answers.append(
+                context.replies.append(
                     Answer(
                         keywords=keywords,
                         group_id=group_id,
@@ -593,13 +608,13 @@ class Chat:
                 )
             context.time = cur_time
             context.trigger_count += 1
-            await db.db_operations.save_context(context)
+            await db.db_operations.save_trigger_keyword(context)
         else:
             context = Context(
                 keywords=pre_keywords,
                 time=cur_time,
                 trigger_count=1,
-                answers=[
+                replies=[
                     Answer(
                         keywords=keywords,
                         group_id=group_id,
@@ -609,7 +624,7 @@ class Chat:
                     )
                 ],
             )
-            await db.db_operations.save_context(context)
+            await db.db_operations.save_trigger_keyword(context)
 
     async def _context_find(self) -> tuple[list[str], str] | None:
         """查找上下文并生成回复"""
@@ -636,7 +651,7 @@ class Chat:
         if db.db_operations is None:
             return None
 
-        context = await db.db_operations.get_context(keywords)
+        context = await db.db_operations.get_trigger_keyword(keywords)
         if not context:
             return None
 
@@ -684,7 +699,7 @@ class Chat:
                 pre_answer.count += answer.count
                 pre_answer.messages += answer.messages
 
-        for answer in context.answers:
+        for answer in context.replies:
             if answer.count < answer_count_threshold:
                 continue
 
@@ -763,52 +778,6 @@ class Chat:
         return [answer_str], final_answer.keywords
 
     @staticmethod
-    async def update_global_blacklist() -> None:
-        """更新全局黑名单"""
-        await Chat._select_blacklist()
-
-        keywords_dict: defaultdict[str, int] = defaultdict(int)
-        global_blacklist: set[str] = set()
-
-        for keywords_list in Chat._blacklist_answer().values():
-            for keywords in keywords_list:
-                keywords_dict[keywords] += 1
-                if keywords_dict[keywords] == 2:
-                    global_blacklist.add(keywords)
-
-        Chat._blacklist_answer()[str(Chat.BLACKLIST_FLAG)] |= global_blacklist
-
-    @staticmethod
-    def _blacklist_answer() -> defaultdict[str, set[str]]:
-        from . import model as model_mod
-
-        if hasattr(model_mod, "_global_blacklist"):
-            return model_mod._global_blacklist  # type: ignore
-        else: 
-            return defaultdict(set)
-
-    @staticmethod
-    async def _select_blacklist() -> None:
-        if db.db_operations is None:
-            return
-
-        blacklist_dict = Chat._blacklist_answer()
-        reserve_dict = defaultdict(set)
-
-        async for group_id in db.db_operations.get_all_blacklist_groups():
-            blacklist = await db.db_operations.get_blacklist(group_id)
-            if blacklist:
-                if blacklist.answers:
-                    blacklist_dict[group_id] |= set(blacklist.answers)
-                if blacklist.answers_reserve:
-                    reserve_dict[group_id] |= set(blacklist.answers_reserve)
-
-        for group_id, answers in reserve_dict.items():
-            if group_id in blacklist_dict:
-                answers -= blacklist_dict[group_id]
-            blacklist_dict[f"reserve_{group_id}"] = answers
-
-    @staticmethod
     async def clearup_context() -> None:
         """清理过期上下文"""
         cur_time = int(time.time())
@@ -817,33 +786,55 @@ class Chat:
         if db.db_operations is None:
             return
 
-        await db.db_operations.clear_expired_contexts(expiration)
+        await db.db_operations.clear_expired_triggers(expiration)
 
     @staticmethod
-    async def _find_ban_keywords(context: Context | None, group_id: str) -> set[str]:
-        """查找禁用的关键词"""
-        blacklist_dict = Chat._blacklist_answer()
-        ban_keywords = blacklist_dict[str(Chat.BLACKLIST_FLAG)] | blacklist_dict[group_id]
+    async def _find_ban_keywords(
+        context: "TriggerKeyword | None", group_id: str
+    ) -> set[str]:
+        """查找禁用的关键词（从 disabled_replies 表）"""
+        ban_keywords: set[str] = set()
 
-        if context is not None and context.ban:
-            ban_count: defaultdict[str, int] = defaultdict(int)
-            for ban in context.ban:
-                ban_key = ban.keywords
-                if ban.group_id in {group_id, Chat.BLACKLIST_FLAG}:
-                    ban_keywords.add(ban_key)
-                else:
-                    ban_count[ban_key] += 1
-                    if ban_count[ban_key] == 2:
-                        ban_keywords.add(ban_key)
+        # 检查上下文关联的禁用记录
+        if context is not None and hasattr(context, "disabled"):
+            for disabled in context.disabled:
+                # 如果是当前群的禁用记录，直接加入
+                if disabled.group_id == group_id:
+                    ban_keywords.add(disabled.keywords)
 
         return ban_keywords
 
     @staticmethod
     async def sync():
-        """同步数据到数据库"""
+        """
+        同步数据到数据库（使用全局状态管理器）
+        """
         if db.db_operations is None:
+            logger.warning("chatimitate: db_operations not initialized, skipping sync")
             return
 
-        chat_instance = Chat.__new__(Chat)
-        chat_instance.state = ChatStateManager(Chat.__new__(Chat).config)
-        await chat_instance._sync()
+        global _global_state_manager
+        if _global_state_manager is None:
+            logger.debug(
+                "chatimitate: global state manager not initialized, skipping sync"
+            )
+            return
+
+        # 使用全局状态管理器进行同步
+        await _global_state_manager._sync()
+
+
+# 全局状态管理器（单例模式）
+_global_state_manager: ChatStateManager | None = None
+_global_config: ChatConfig | None = None
+
+
+def get_global_state_manager(config: ChatConfig) -> ChatStateManager:
+    """获取或创建全局状态管理器（单例模式）"""
+    global _global_state_manager, _global_config
+
+    if _global_state_manager is None or _global_config != config:
+        _global_state_manager = ChatStateManager(config)
+        _global_config = config
+
+    return _global_state_manager

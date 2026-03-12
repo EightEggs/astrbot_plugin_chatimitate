@@ -65,7 +65,7 @@
         "default": true
     },
     "image_similarity_threshold": {
-        "description": "【图片去重】判断两张图片是否相同的阈值。数值越大要求越严格，0.8 表示 80% 相似就认为是同一张图",
+        "description": "图片相似度阈值，用于识别重复图片",
         "type": "float",
         "default": 0.8
     }

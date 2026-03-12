@@ -1,6 +1,26 @@
 """
 AstrBot ChatImitate Plugin - Database Module
 精简优化的数据库模块，仅保留聊天学习核心功能
+
+数据库表结构说明：
+===================
+1. chat_messages（聊天记录表）
+   作用：存储群聊历史消息，用于学习人类的聊天模式
+   示例：用户 A 说"早上好" → 记录到数据库
+
+2. trigger_keywords（触发关键词表）
+   作用：存储什么情况下会触发回复（上下文）
+   示例：当有人提到"天气"时 → 触发回复逻辑
+
+3. reply_contents（回复内容表）
+   作用：存储具体的回复内容（回复什么）
+   示例：就回复"今天天气不错"
+   关系：一条 trigger_keywords 可以对应多条 reply_contents
+
+4. disabled_replies（禁用回复表）
+   作用：存储某个群禁止使用的回复
+   示例：管理员引用机器人的回复说"禁止说这个" → 在该群禁用这条回复
+   说明：只保留这一个禁用表，每个群可以有自己的禁用列表
 """
 
 import json
@@ -15,60 +35,53 @@ from astrbot.api.star import StarTools
 
 
 @dataclass
-class Message:
-    """消息数据模型"""
+class ChatMessage:
+    """聊天记录数据模型 - 存储群聊历史消息"""
 
-    group_id: str
-    user_id: str
-    bot_id: str
-    raw_message: str
-    is_plain_text: bool = True
-    plain_text: str = ""
-    keywords: str = ""
-    time: int = field(default_factory=lambda: int(time.time()))
-
-
-@dataclass
-class Answer:
-    """回复数据模型"""
-
-    keywords: str
-    group_id: str
-    count: int = 1
-    time: int = field(default_factory=lambda: int(time.time()))
-    messages: list[str] = field(default_factory=list)
-    topical: int = 0
+    group_id: str  # 群组 ID
+    user_id: str  # 发送者 ID
+    bot_id: str  # 机器人 ID
+    raw_message: str  # 原始消息（包含 CQ 码）
+    is_plain_text: bool = True  # 是否为纯文本
+    plain_text: str = ""  # 纯文本内容
+    keywords: str = ""  # 提取的关键词
+    time: int = field(default_factory=lambda: int(time.time()))  # 发送时间
 
 
 @dataclass
-class Ban:
-    """禁用回复数据模型"""
+class TriggerKeyword:
+    """触发关键词数据模型 - 存储什么情况下会触发回复"""
 
-    keywords: str
-    group_id: str
-    reason: str
-    time: int = field(default_factory=lambda: int(time.time()))
-
-
-@dataclass
-class Context:
-    """上下文数据模型"""
-
-    keywords: str
-    time: int = field(default_factory=lambda: int(time.time()))
-    trigger_count: int = 1
-    answers: list[Answer] = field(default_factory=list)
-    ban: list[Ban] = field(default_factory=list)
-    clear_time: int = 0
+    keywords: str  # 触发关键词
+    time: int = field(default_factory=lambda: int(time.time()))  # 最后触发时间
+    trigger_count: int = 1  # 触发次数（学习深度）
+    clear_time: int = 0  # 清理标记时间
+    # 关联的回复内容
+    replies: list["ReplyContent"] = field(default_factory=list)
+    # 关联的禁用记录
+    disabled: list["DisabledReply"] = field(default_factory=list)
 
 
 @dataclass
-class BlackList:
-    """黑名单数据模型"""
+class ReplyContent:
+    """回复内容数据模型 - 存储具体的回复内容"""
 
-    group_id: str
-    answers: list[str] = field(default_factory=list)
-    answers_reserve: list[str] = field(default_factory=list)
+    keywords: str  # 回复的关键词（用于匹配）
+    group_id: str  # 来源群组 ID
+    count: int = 1  # 使用次数（越大约常用）
+    time: int = field(default_factory=lambda: int(time.time()))  # 最后使用时间
+    messages: list[str] = field(default_factory=list)  # 实际回复内容列表
+    topical: int = 0  # 话题相关度权重
+
+
+@dataclass
+class DisabledReply:
+    """禁用回复数据模型 - 存储临时被禁用的回复"""
+
+    keywords: str  # 被禁用的关键词
+    group_id: str  # 禁用来源群组
+    reason: str  # 禁用原因（预留）
+    time: int = field(default_factory=lambda: int(time.time()))  # 禁用时间
 
 
 class DatabaseManager:
@@ -92,72 +105,74 @@ class DatabaseManager:
         """初始化数据库表"""
         conn = await self.get_connection()
 
+        # 表结构定义（使用清晰易懂的表名）
         tables = [
-            """CREATE TABLE IF NOT EXISTS messages (
+            # 1. 聊天记录表 - 存储群聊历史消息
+            """CREATE TABLE IF NOT EXISTS chat_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                group_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                bot_id TEXT NOT NULL,
-                raw_message TEXT NOT NULL,
-                is_plain_text INTEGER DEFAULT 1,
-                plain_text TEXT NOT NULL,
-                keywords TEXT NOT NULL,
-                time INTEGER DEFAULT (strftime('%s', 'now')),
-                created_at INTEGER DEFAULT (strftime('%s', 'now'))
+                group_id TEXT NOT NULL,           -- 群组 ID
+                user_id TEXT NOT NULL,            -- 发送者 ID
+                bot_id TEXT NOT NULL,             -- 机器人 ID
+                raw_message TEXT NOT NULL,        -- 原始消息（包含 CQ 码）
+                is_plain_text INTEGER DEFAULT 1,  -- 是否为纯文本
+                plain_text TEXT NOT NULL,         -- 纯文本内容
+                keywords TEXT NOT NULL,           -- 提取的关键词
+                time INTEGER DEFAULT (strftime('%s', 'now')),  -- 发送时间
+                created_at INTEGER DEFAULT (strftime('%s', 'now'))  -- 创建时间
             )""",
-            """CREATE TABLE IF NOT EXISTS contexts (
+            # 2. 触发关键词表 - 存储什么情况下会触发回复
+            """CREATE TABLE IF NOT EXISTS trigger_keywords (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                keywords TEXT UNIQUE NOT NULL,
-                time INTEGER DEFAULT (strftime('%s', 'now')),
-                trigger_count INTEGER DEFAULT 1,
-                clear_time INTEGER DEFAULT 0,
-                created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+                keywords TEXT UNIQUE NOT NULL,    -- 触发关键词（唯一）
+                time INTEGER DEFAULT (strftime('%s', 'now')),  -- 最后触发时间
+                trigger_count INTEGER DEFAULT 1,  -- 触发次数（学习深度）
+                clear_time INTEGER DEFAULT 0,     -- 清理标记时间
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),  -- 创建时间
+                updated_at INTEGER DEFAULT (strftime('%s', 'now'))   -- 更新时间
             )""",
-            """CREATE TABLE IF NOT EXISTS answers (
+            # 3. 回复内容表 - 存储具体的回复内容
+            """CREATE TABLE IF NOT EXISTS reply_contents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                context_id INTEGER NOT NULL,
-                keywords TEXT NOT NULL,
-                group_id TEXT NOT NULL,
-                count INTEGER DEFAULT 1,
-                time INTEGER DEFAULT (strftime('%s', 'now')),
-                messages TEXT DEFAULT '[]',
-                topical INTEGER DEFAULT 0,
-                created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                FOREIGN KEY (context_id) REFERENCES contexts (id) ON DELETE CASCADE
+                context_id INTEGER NOT NULL,      -- 关联的触发关键词 ID
+                keywords TEXT NOT NULL,           -- 回复的关键词
+                group_id TEXT NOT NULL,           -- 来源群组 ID
+                count INTEGER DEFAULT 1,          -- 使用次数（越大约常用）
+                time INTEGER DEFAULT (strftime('%s', 'now')),  -- 最后使用时间
+                messages TEXT DEFAULT '[]',       -- 实际回复内容列表（JSON 格式）
+                topical INTEGER DEFAULT 0,        -- 话题相关度权重
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),  -- 创建时间
+                FOREIGN KEY (context_id) REFERENCES trigger_keywords (id) ON DELETE CASCADE
             )""",
-            """CREATE TABLE IF NOT EXISTS bans (
+            # 4. 禁用回复表 - 存储临时被禁用的回复
+            """CREATE TABLE IF NOT EXISTS disabled_replies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                context_id INTEGER NOT NULL,
-                keywords TEXT NOT NULL,
-                group_id TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                time INTEGER DEFAULT (strftime('%s', 'now')),
-                created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                FOREIGN KEY (context_id) REFERENCES contexts (id) ON DELETE CASCADE
-            )""",
-            """CREATE TABLE IF NOT EXISTS blacklist (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                group_id TEXT UNIQUE NOT NULL,
-                answers TEXT DEFAULT '[]',
-                answers_reserve TEXT DEFAULT '[]',
-                created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+                context_id INTEGER NOT NULL,      -- 关联的触发关键词 ID
+                keywords TEXT NOT NULL,           -- 被禁用的关键词
+                group_id TEXT NOT NULL,           -- 禁用来源群组
+                reason TEXT NOT NULL,             -- 禁用原因（预留）
+                time INTEGER DEFAULT (strftime('%s', 'now')),  -- 禁用时间
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),  -- 创建时间
+                FOREIGN KEY (context_id) REFERENCES trigger_keywords (id) ON DELETE CASCADE
             )""",
         ]
 
         for table_sql in tables:
             await conn.execute(table_sql)
 
+        # 索引优化
         indexes = [
-            "CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(time)",
-            "CREATE INDEX IF NOT EXISTS idx_messages_group ON messages(group_id, time)",
-            "CREATE INDEX IF NOT EXISTS idx_contexts_keywords ON contexts(keywords)",
-            "CREATE INDEX IF NOT EXISTS idx_contexts_trigger ON contexts(trigger_count, time)",
-            "CREATE INDEX IF NOT EXISTS idx_answers_context ON answers(context_id)",
-            "CREATE INDEX IF NOT EXISTS idx_answers_group_keywords ON answers(group_id, keywords)",
-            "CREATE INDEX IF NOT EXISTS idx_bans_context ON bans(context_id)",
-            "CREATE INDEX IF NOT EXISTS idx_blacklist_group ON blacklist(group_id)",
+            # 聊天记录索引
+            "CREATE INDEX IF NOT EXISTS idx_chat_messages_time ON chat_messages(time)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_messages_group ON chat_messages(group_id, time)",
+            # 触发关键词索引
+            "CREATE INDEX IF NOT EXISTS idx_trigger_keywords_keywords ON trigger_keywords(keywords)",
+            "CREATE INDEX IF NOT EXISTS idx_trigger_keywords_trigger ON trigger_keywords(trigger_count, time)",
+            # 回复内容索引
+            "CREATE INDEX IF NOT EXISTS idx_reply_contents_context ON reply_contents(context_id)",
+            "CREATE INDEX IF NOT EXISTS idx_reply_contents_group_keywords ON reply_contents(group_id, keywords)",
+            # 禁用回复索引
+            "CREATE INDEX IF NOT EXISTS idx_disabled_replies_context ON disabled_replies(context_id)",
+            "CREATE INDEX IF NOT EXISTS idx_disabled_replies_group ON disabled_replies(group_id)",
         ]
 
         for index_sql in indexes:
@@ -188,11 +203,11 @@ class DatabaseOperations:
         """反序列化 JSON 数据"""
         return json.loads(json_str) if json_str else None
 
-    async def save_message(self, message: Message) -> int:
-        """保存消息"""
+    async def save_message(self, message: ChatMessage) -> int:
+        """保存聊天记录到数据库"""
         conn = await self.db.get_connection()
         cursor = await conn.execute(
-            """INSERT INTO messages
+            """INSERT INTO chat_messages
             (group_id, user_id, bot_id, raw_message, is_plain_text, plain_text, keywords, time)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
@@ -211,11 +226,11 @@ class DatabaseOperations:
 
     async def get_messages_by_group(
         self, group_id: str, limit: int = 100
-    ) -> list[Message]:
-        """获取群组最近消息"""
+    ) -> list[ChatMessage]:
+        """获取群组最近的聊天记录"""
         conn = await self.db.get_connection()
         async with conn.execute(
-            """SELECT * FROM messages
+            """SELECT * FROM chat_messages
             WHERE group_id = ?
             ORDER BY time DESC
             LIMIT ?""",
@@ -223,7 +238,7 @@ class DatabaseOperations:
         ) as cursor:
             rows = await cursor.fetchall()
             return [
-                Message(
+                ChatMessage(
                     group_id=str(row["group_id"]),
                     user_id=str(row["user_id"]),
                     bot_id=str(row["bot_id"]),
@@ -236,39 +251,46 @@ class DatabaseOperations:
                 for row in rows
             ]
 
-    async def get_context(self, keywords: str) -> Context | None:
-        """获取上下文"""
+    async def get_trigger_keyword(self, keywords: str) -> TriggerKeyword | None:
+        """获取触发关键词及其关联的回复"""
         conn = await self.db.get_connection()
 
+        # 查询触发关键词
         async with conn.execute(
-            "SELECT * FROM contexts WHERE keywords = ?", (keywords,)
+            "SELECT * FROM trigger_keywords WHERE keywords = ?", (keywords,)
         ) as cursor:
-            context_row = await cursor.fetchone()
-            if not context_row:
+            trigger_row = await cursor.fetchone()
+            if not trigger_row:
                 return None
 
-        answers = []
+        # 查询关联的回复内容
+        replies = []
         async with conn.execute(
-            "SELECT * FROM answers WHERE context_id = ?", (context_row["id"],)
+            "SELECT * FROM reply_contents WHERE context_id = ?", (trigger_row["id"],)
         ) as cursor:
             async for row in cursor:
-                answers.append(
-                    Answer(
+                messages_data = self._json_deserialize(row["messages"])
+                if not isinstance(messages_data, list):
+                    messages_data = []
+                replies.append(
+                    ReplyContent(
                         keywords=row["keywords"],
                         group_id=str(row["group_id"]),
                         count=row["count"],
                         time=row["time"],
-                        messages=self._json_deserialize(row["messages"]),  # type: ignore
+                        messages=messages_data,
+                        topical=row["topical"],
                     )
                 )
 
-        bans = []
+        # 查询关联的禁用记录
+        disabled = []
         async with conn.execute(
-            "SELECT * FROM bans WHERE context_id = ?", (context_row["id"],)
+            "SELECT * FROM disabled_replies WHERE context_id = ?", (trigger_row["id"],)
         ) as cursor:
             async for row in cursor:
-                bans.append(
-                    Ban(
+                disabled.append(
+                    DisabledReply(
                         keywords=row["keywords"],
                         group_id=str(row["group_id"]),
                         reason=row["reason"],
@@ -276,153 +298,214 @@ class DatabaseOperations:
                     )
                 )
 
-        return Context(
-            keywords=context_row["keywords"],
-            time=context_row["time"],
-            trigger_count=context_row["trigger_count"],
-            answers=answers,
-            ban=bans,
-            clear_time=context_row["clear_time"],
+        return TriggerKeyword(
+            keywords=trigger_row["keywords"],
+            time=trigger_row["time"],
+            trigger_count=trigger_row["trigger_count"],
+            replies=replies,
+            disabled=disabled,
+            clear_time=trigger_row["clear_time"],
         )
 
-    async def save_context(self, context: Context) -> None:
-        """保存上下文"""
+    async def save_trigger_keyword(self, trigger: TriggerKeyword) -> None:
+        """保存触发关键词及其关联的回复"""
         conn = await self.db.get_connection()
 
+        # 保存触发关键词
         await conn.execute(
-            """INSERT OR REPLACE INTO contexts
+            """INSERT OR REPLACE INTO trigger_keywords
             (keywords, time, trigger_count, clear_time, updated_at)
             VALUES (?, ?, ?, ?, strftime('%s', 'now'))""",
-            (context.keywords, context.time, context.trigger_count, context.clear_time),
+            (trigger.keywords, trigger.time, trigger.trigger_count, trigger.clear_time),
         )
 
+        # 获取触发关键词 ID
         async with conn.execute(
-            "SELECT id FROM contexts WHERE keywords = ?", (context.keywords,)
+            "SELECT id FROM trigger_keywords WHERE keywords = ?", (trigger.keywords,)
         ) as cursor:
             context_id_row = await cursor.fetchone()
             context_id = context_id_row["id"] if context_id_row else None
 
         if context_id:
+            # 删除旧的回复和禁用记录
             await conn.execute(
-                "DELETE FROM answers WHERE context_id = ?", (context_id,)
+                "DELETE FROM reply_contents WHERE context_id = ?", (context_id,)
             )
-            await conn.execute("DELETE FROM bans WHERE context_id = ?", (context_id,))
+            await conn.execute(
+                "DELETE FROM disabled_replies WHERE context_id = ?", (context_id,)
+            )
 
-            if context.answers:
+            # 批量插入新的回复内容
+            if trigger.replies:
                 await conn.executemany(
-                    """INSERT INTO answers
+                    """INSERT INTO reply_contents
                     (context_id, keywords, group_id, count, time, messages, topical)
                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     [
                         (
                             context_id,
-                            answer.keywords,
-                            answer.group_id,
-                            answer.count,
-                            answer.time,
-                            self._json_serialize(answer.messages),
-                            answer.topical,
+                            reply.keywords,
+                            reply.group_id,
+                            reply.count,
+                            reply.time,
+                            self._json_serialize(reply.messages),
+                            reply.topical,
                         )
-                        for answer in context.answers
+                        for reply in trigger.replies
                     ],
                 )
 
-            if context.ban:
+            # 批量插入新的禁用记录
+            if trigger.disabled:
                 await conn.executemany(
-                    """INSERT INTO bans
+                    """INSERT INTO disabled_replies
                     (context_id, keywords, group_id, reason, time)
                     VALUES (?, ?, ?, ?, ?)""",
                     [
-                        (context_id, ban.keywords, ban.group_id, ban.reason, ban.time)
-                        for ban in context.ban
+                        (
+                            context_id,
+                            disabled.keywords,
+                            disabled.group_id,
+                            disabled.reason,
+                            disabled.time,
+                        )
+                        for disabled in trigger.disabled
                     ],
                 )
 
         await conn.commit()
 
-    async def get_blacklist(self, group_id: str) -> BlackList | None:
-        """获取黑名单"""
+    async def disable_reply(
+        self, context_id: int, keywords: str, group_id: str, reason: str = ""
+    ) -> int:
+        """在指定群组禁用某个回复"""
         conn = await self.db.get_connection()
-        async with conn.execute(
-            "SELECT * FROM blacklist WHERE group_id = ?", (group_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return BlackList(
-                    group_id=str(row["group_id"]),
-                    answers=self._json_deserialize(row["answers"]),  # type: ignore
-                    answers_reserve=self._json_deserialize(row["answers_reserve"]),  # type: ignore
-                )
-        return None
-
-    async def save_blacklist(self, blacklist: BlackList) -> None:
-        """保存黑名单"""
-        conn = await self.db.get_connection()
-        await conn.execute(
-            """INSERT OR REPLACE INTO blacklist
-            (group_id, answers, answers_reserve, updated_at)
-            VALUES (?, ?, ?, strftime('%s', 'now'))""",
-            (
-                blacklist.group_id,
-                self._json_serialize(blacklist.answers),
-                self._json_serialize(blacklist.answers_reserve),
-            ),
+        cursor = await conn.execute(
+            """INSERT INTO disabled_replies
+            (context_id, keywords, group_id, reason, time)
+            VALUES (?, ?, ?, ?, strftime('%s', 'now'))""",
+            (context_id, keywords, group_id, reason),
         )
         await conn.commit()
+        return cursor.lastrowid or 0
 
-    async def clear_expired_contexts(self, expiration: int) -> int:
-        """清理过期的上下文"""
+    async def get_disabled_replies_by_group(
+        self, group_id: str
+    ) -> AsyncGenerator[DisabledReply, None]:
+        """获取指定群组的所有禁用回复（生成器）"""
+        conn = await self.db.get_connection()
+        async with conn.execute(
+            "SELECT * FROM disabled_replies WHERE group_id = ?", (group_id,)
+        ) as cursor:
+            async for row in cursor:
+                yield DisabledReply(
+                    keywords=row["keywords"],
+                    group_id=str(row["group_id"]),
+                    reason=row["reason"],
+                    time=row["time"],
+                )
+
+    async def clear_expired_triggers(self, expiration: int) -> int:
+        """清理过期的触发关键词"""
         conn = await self.db.get_connection()
 
         await conn.execute("BEGIN")
         try:
+            # 删除长期未使用的触发关键词
             await conn.execute(
-                """DELETE FROM contexts
+                """DELETE FROM trigger_keywords
                 WHERE time < ?
                   AND trigger_count < ?
                   AND id NOT IN (
-                      SELECT DISTINCT context_id FROM answers
+                      SELECT DISTINCT context_id FROM reply_contents
                       WHERE count > 1 OR time > ?
                   )""",
                 (expiration, 3, expiration),
             )
 
+            # 标记高频触发关键词为已清理
             async with conn.execute(
-                "SELECT id FROM contexts WHERE trigger_count > 100 OR clear_time < ?",
+                "SELECT id FROM trigger_keywords WHERE trigger_count > 100 OR clear_time < ?",
                 (expiration,),
             ) as cursor:
                 rows = await cursor.fetchall()
 
-            context_ids = [row["id"] for row in rows]
-            if context_ids:
-                placeholders = ",".join(["?"] * len(context_ids))
+            trigger_ids = [row["id"] for row in rows]
+            if trigger_ids:
+                placeholders = ",".join(["?"] * len(trigger_ids))
+                # 删除低频回复，保留高频回复
                 await conn.execute(
-                    f"""DELETE FROM answers
+                    f"""DELETE FROM reply_contents
                     WHERE context_id IN ({placeholders})
                       AND NOT (count > 1 OR time > ?)""",
-                    (*context_ids, expiration),
+                    (*trigger_ids, expiration),
                 )
+                # 更新清理时间
                 await conn.execute(
-                    f"""UPDATE contexts
+                    f"""UPDATE trigger_keywords
                     SET clear_time = ?, updated_at = strftime('%s', 'now')
                     WHERE id IN ({placeholders})""",
-                    (int(time.time()), *context_ids),
+                    (int(time.time()), *trigger_ids),
                 )
 
             await conn.commit()
-            return len(context_ids)
+            return len(trigger_ids)
         except Exception:
             await conn.rollback()
             raise
 
-    async def get_all_blacklist_groups(self) -> AsyncGenerator[str, None]:
-        """获取所有黑名单群组的生成器"""
+    async def get_all_disabled_groups(self) -> AsyncGenerator[str, None]:
+        """获取所有有禁用记录的群组的生成器"""
         conn = await self.db.get_connection()
-        async with conn.execute("SELECT DISTINCT group_id FROM blacklist") as cursor:
+        async with conn.execute(
+            "SELECT DISTINCT group_id FROM disabled_replies"
+        ) as cursor:
             async for row in cursor:
                 yield str(row["group_id"])
 
+    async def find_context_by_reply(self, reply_message: str) -> int | None:
+        """
+        根据回复内容查找对应的 context_id
 
+        Args:
+            reply_message: 回复内容
+
+        Returns:
+            context_id 如果找到，否则 None
+        """
+        conn = await self.db.get_connection()
+
+        # 方法 1：直接在 reply_contents 表中查找包含该回复的记录
+        # 这是最准确的方法
+        async with conn.execute(
+            """SELECT context_id, messages FROM reply_contents"""
+        ) as cursor:
+            async for row in cursor:
+                messages_str = row["messages"]
+                if messages_str:
+                    try:
+                        messages = self._json_deserialize(messages_str)
+                        if isinstance(messages, list):
+                            # 检查回复内容是否在 messages 列表中
+                            for msg in messages:
+                                if msg and reply_message in msg:
+                                    return row["context_id"]
+                    except Exception:
+                        continue
+
+        # 方法 2：如果方法 1 没找到，尝试使用回复内容作为关键词查找
+        # 这是备选方案
+        async with conn.execute(
+            """SELECT id FROM trigger_keywords WHERE keywords = ?""", (reply_message,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return row["id"]
+
+        return None
+
+
+# 全局数据库实例
 db_manager: DatabaseManager | None = None
 db_operations: DatabaseOperations | None = None
 
@@ -440,11 +523,12 @@ async def init_db(plugin_name: str = "astrbot_plugin_chatimitate") -> None:
 
 
 __all__ = [
-    "Message",
-    "Answer",
-    "Ban",
-    "Context",
-    "BlackList",
+    # 数据模型
+    "ChatMessage",  # 聊天记录
+    "TriggerKeyword",  # 触发关键词
+    "ReplyContent",  # 回复内容
+    "DisabledReply",  # 禁用回复
+    # 数据库管理
     "DatabaseManager",
     "DatabaseOperations",
     "db_manager",

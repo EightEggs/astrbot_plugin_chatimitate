@@ -10,10 +10,11 @@ import time
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import Image, Plain
+from astrbot.api.message_components import Image, Plain, Reply
 from astrbot.api.star import Context, Star
 from astrbot.core.message.message_event_result import MessageChain
 
+from . import db
 from .db import init_db
 from .model import Chat
 
@@ -90,27 +91,23 @@ class ChatImitate(Star):
         if event.get_sender_id() == event.get_self_id():
             return
 
+        # 检查是否是管理员在禁用回复
+        if await self._handle_admin_disable(event):
+            return
+
         chat = Chat(event, self.config)
 
         try:
             await chat.learn()
-        except Exception:
-            logger.warning("chatimitate: learn failed", exc_info=True)
 
-        try:
-            answers = await chat.answer()
-        except Exception:
-            logger.warning("chatimitate: answer failed", exc_info=True)
-            return
-
-        if not answers:
-            return
-
-        async for msg in answers:
-            message_chain = self._parse_message(msg)
-            if message_chain:
-                await event.send(message_chain)
-                await asyncio.sleep(random.randint(1, 3))
+            # 直接使用 async for 遍历 answer() 生成器
+            async for msg in chat.answer():
+                message_chain = self._parse_message(msg)
+                if message_chain:
+                    await event.send(message_chain)
+                    await asyncio.sleep(random.randint(1, 3))
+        except Exception as e:
+            logger.warning("chatimitate: learn/answer failed: %s", e, exc_info=True)
 
     def _parse_message(self, msg: str) -> MessageChain | None:
         """
@@ -200,3 +197,142 @@ class ChatImitate(Star):
                 components.append(Plain(text))
 
         return MessageChain(components) if components else None
+
+    async def _handle_admin_disable(self, event: AstrMessageEvent) -> bool:
+        """
+        处理管理员禁用回复命令
+
+        场景：管理员引用机器人的回复，然后说"禁止说这" → 在该群禁用这条回复
+        """
+        message_chain = event.get_messages()
+        if not message_chain:
+            return False
+
+        # 检查消息中是否包含引用回复组件
+        reply_component = None
+        command_text = ""
+
+        for comp in message_chain:
+            if isinstance(comp, Reply):
+                reply_component = comp
+            elif isinstance(comp, Plain):
+                command_text = comp.text.strip()
+
+        # 如果没有引用回复组件，不是禁用命令
+        if not reply_component:
+            return False
+
+        # 检查命令文本是否是禁用指令
+        if not self._is_disable_command(command_text):
+            return False
+
+        # 检查是否是管理员（使用 AstrBot API）
+        if not event.is_admin():
+            await event.send(MessageChain([Plain("权限不足，只有管理员可以禁用回复")]))
+            return False
+
+        # 执行禁用操作
+        try:
+            await self._disable_reply(reply_component, event)
+            await event.send(MessageChain([Plain("✅ 已禁用该回复")]))
+            return True
+        except Exception as e:
+            logger.error("chatimitate: failed to disable reply: %s", e, exc_info=True)
+            await event.send(MessageChain([Plain("❌ 禁用回复失败")]))
+            return True  # 返回 True 表示已经处理了这个命令
+
+    def _is_disable_command(self, text: str) -> bool:
+        """检查是否是禁用命令"""
+        disable_commands = [
+            "禁止说这",
+            "禁止说这个",
+            "禁用这个",
+            "禁用这",
+            "不要说这个",
+            "不许说这个",
+            "禁止",
+            "禁用",
+            "屏蔽",
+            "阻止",
+            "停用",
+            "disable",
+            "ban",
+        ]
+        text_lower = text.lower()
+        return any(cmd in text_lower for cmd in disable_commands)
+
+    async def _disable_reply(self, reply: Reply, event: AstrMessageEvent):
+        """在数据库中禁用引用的回复"""
+        if not db.db_operations:
+            raise Exception("数据库未初始化")
+
+        group_id = event.get_group_id()
+        reply_message = str(getattr(reply, "text", "") or "")
+
+        # 从 reply 对象中获取引用的消息 ID
+        reply_id = getattr(reply, "id", None)
+
+        # 方法 1：通过消息 ID 查找（如果 reply 对象包含此信息）
+        if reply_id:
+            # 尝试从数据库中查找包含此回复的 context_id
+            # 这需要遍历所有 trigger_keywords 和它们的 replies
+            # 为简化，我们使用关键词匹配
+
+            # 从 trigger_keywords 表中查找所有记录
+            # 然后检查它们的 reply_contents 是否包含该回复
+            pass
+
+        # 方法 2：使用回复内容作为关键词查找
+        # 这是更可靠的方法
+        if reply_message:
+            # 从数据库中查找包含该回复的触发关键词
+            # 由于我们不知道具体的 context_id，需要遍历查找
+            # 这里我们使用一个简化的方法：
+            # 1. 查找所有 trigger_keywords
+            # 2. 对于每个 trigger_keyword，查找其 reply_contents
+            # 3. 如果找到匹配的回复，记录 context_id 和 reply 的 keywords
+
+            # 由于数据库操作的限制，我们使用一个更直接的方法：
+            # 直接在禁用表中记录该回复内容，使用回复内容本身作为关键词
+            # 这样在检查时，会匹配到相同的关键词并禁用
+
+            # 获取回复的关键词（从消息内容提取）
+            keywords = reply_message.strip()
+            if keywords:
+                # 首先尝试查找包含该回复的 context_id
+                # 这里我们需要一个辅助方法来查找
+                context_id = await self._find_context_by_reply(keywords)
+
+                if context_id:
+                    # 找到了对应的 context_id，禁用该回复
+                    await db.db_operations.disable_reply(
+                        context_id=context_id,
+                        keywords=keywords,
+                        group_id=group_id,
+                        reason="管理员禁用",
+                    )
+                    logger.info(
+                        "chatimitate: disabled reply '%s' in group %s (context_id=%s)",
+                        keywords,
+                        group_id,
+                        context_id,
+                    )
+                else:
+                    # 没有找到对应的 context_id，记录日志
+                    logger.warning(
+                        "chatimitate: could not find context for reply '%s' in group %s",
+                        keywords,
+                        group_id,
+                    )
+
+    async def _find_context_by_reply(self, reply_message: str) -> int | None:
+        """
+        根据回复内容查找对应的 context_id
+
+        这是一个辅助方法，用于找到包含指定回复的触发关键词
+        """
+        if not db.db_operations:
+            return None
+
+        # 使用数据库提供的查找方法
+        return await db.db_operations.find_context_by_reply(reply_message)
