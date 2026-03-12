@@ -268,11 +268,10 @@ class ChatStateManager:
 
 
 class Chat:
-    """聊天学习和回复核心类 - 增强版"""
+    """聊天学习和回复核心类"""
 
-    BLACKLIST_FLAG: int = 114514
-    SPEAK_FLAG: str = "[Bot: Speak]"
-    REPLY_FLAG: str = "[Bot: Reply]"
+    # 回复标记常量，用于标识特殊的回复记录
+    REPLY_FLAG: str = "__REPLY_MARKER__"
 
     def __init__(
         self, data: ChatData | AstrMessageEvent, plugin_config: AstrBotConfig
