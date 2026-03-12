@@ -5,6 +5,7 @@ AstrBot ChatImitate Plugin - Main Module
 
 import asyncio
 import random
+import time
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -63,7 +64,7 @@ class ChatImitatePlugin(Star):
             except Exception:
                 logger.warning("chatimitate: periodic sync failed", exc_info=True)
 
-            today = int(random.random() * 100000)
+            today = int(time.strftime("%Y%m%d"))
             if last_cleanup_day != today:
                 try:
                     await Chat.clearup_context(self.config.cleanup_expired_days)
