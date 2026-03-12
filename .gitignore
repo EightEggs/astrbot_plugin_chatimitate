@@ -208,3 +208,4 @@ __marimo__/
 
 .vscode/
 test_*.py
+refcode/
