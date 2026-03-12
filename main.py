@@ -71,7 +71,9 @@ class ChatImitate(Star):
             today = int(time.strftime("%Y%m%d"))
             if last_cleanup_day != today:
                 try:
-                    await Chat.clearup_context()
+                    # 使用配置中的清理天数
+                    cleanup_days = getattr(self.config, "cleanup_expired_days", 15)
+                    await Chat.clearup_context(cleanup_days)
                     last_cleanup_day = today
                 except Exception:
                     logger.warning("chatimitate: clearup_context failed", exc_info=True)

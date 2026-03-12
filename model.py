@@ -564,7 +564,6 @@ class Chat:
             MessageModel(
                 group_id=group_id,
                 user_id=self.chat_data.user_id,
-                bot_id=self.chat_data.bot_id,
                 raw_message=raw_message_desc,
                 is_plain_text=self.chat_data.is_plain_text,
                 plain_text=self.chat_data.plain_text,
@@ -807,10 +806,15 @@ class Chat:
         return [answer_str], final_answer.keywords
 
     @staticmethod
-    async def clearup_context() -> None:
-        """清理过期上下文"""
+    async def clearup_context(expired_days: int = 15) -> None:
+        """
+        清理过期上下文
+
+        Args:
+            expired_days: 多少天内的数据需要保留，超出这个天数的低频数据会被清理
+        """
         cur_time = int(time.time())
-        expiration = cur_time - 15 * 24 * 3600
+        expiration = cur_time - expired_days * 24 * 3600
 
         if db.db_operations is None:
             return

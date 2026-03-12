@@ -54,7 +54,6 @@ class ChatMessage:
 
     group_id: str  # 群组 ID
     user_id: str  # 发送者 ID
-    bot_id: str  # 机器人 ID
     raw_message: str  # 原始消息的结构化描述（用于调试）
     is_plain_text: bool = True  # 是否为纯文本
     plain_text: str = ""  # 纯文本内容
@@ -126,7 +125,6 @@ class DatabaseManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_id TEXT NOT NULL,           -- 群组 ID
                 user_id TEXT NOT NULL,            -- 发送者 ID
-                bot_id TEXT NOT NULL,             -- 机器人 ID
                 raw_message TEXT NOT NULL,        -- 原始消息的结构化描述
                 is_plain_text INTEGER DEFAULT 1,  -- 是否为纯文本
                 plain_text TEXT NOT NULL,         -- 纯文本内容
@@ -212,12 +210,11 @@ class DatabaseOperations:
         conn = await self.db.get_connection()
         cursor = await conn.execute(
             """INSERT INTO chat_messages
-            (group_id, user_id, bot_id, raw_message, is_plain_text, plain_text, keywords, time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (group_id, user_id, raw_message, is_plain_text, plain_text, keywords, time)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 message.group_id,
                 message.user_id,
-                message.bot_id,
                 message.raw_message,
                 1 if message.is_plain_text else 0,
                 message.plain_text,
@@ -245,7 +242,6 @@ class DatabaseOperations:
                 ChatMessage(
                     group_id=str(row["group_id"]),
                     user_id=str(row["user_id"]),
-                    bot_id=str(row["bot_id"]),
                     raw_message=row["raw_message"],
                     is_plain_text=bool(row["is_plain_text"]),
                     plain_text=row["plain_text"],

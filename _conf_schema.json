@@ -54,6 +54,11 @@
         "type": "int",
         "default": 100
     },
+    "cleanup_expired_days": {
+        "description": "清理多少天内未学会（触发次数少）的聊天上下文。数值越小清理越频繁，数据库越小；数值越大保留的历史越多。建议范围：7-30",
+        "type": "int",
+        "default": 15
+    },
     "enable_image_learning": {
         "description": "是否允许机器人学习和回复图片消息。开启后会学习群友发送的图片，并在适当时机回复之前出现过的图片",
         "type": "bool",
