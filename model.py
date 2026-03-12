@@ -7,7 +7,6 @@ AstrBot ChatImitate Plugin - Core Logic Module
 import asyncio
 import hashlib
 import random
-import re
 import time
 from collections import defaultdict, deque
 from collections.abc import AsyncGenerator
@@ -20,11 +19,13 @@ import pypinyin
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import (
+    At,
     Face,
     File,
     Image,
     Plain,
     Record,
+    Reply,
     Video,
 )
 
@@ -39,18 +40,24 @@ Context = TriggerKeyword
 
 @dataclass
 class ChatData:
-    """聊天数据结构 - 增强版"""
+    """聊天数据结构 - 完全结构化版本"""
 
     group_id: str
     user_id: str
-    raw_message: str
     plain_text: str
     time: int
     bot_id: str
     message_type: str = "text"  # text, image, record, video, file, mixed
     image_hash: str | None = None  # 图片哈希，用于去重
     image_url: str | None = None  # 图片 URL
+    is_reply: bool = False  # 是否是回复消息
+    has_media_content: bool = False  # 是否包含多媒体内容
+    _event: AstrMessageEvent | None = None  # 原始事件对象，用于结构化检查
     _keywords_size: int = 2
+
+    def has_media(self) -> bool:
+        """检查消息是否包含多媒体内容（非纯文本）"""
+        return self.has_media_content
 
     @cached_property
     def is_plain_text(self) -> bool:
@@ -107,7 +114,8 @@ class ChatData:
         if self.is_file:
             return "[文件]"
         if not self.is_plain_text and len(self.plain_text) == 0:
-            return self.raw_message
+            # 非纯文本且无纯文本内容时，返回消息类型标记
+            return f"[{self.message_type}]"
         return (
             " ".join(self._keywords_list) if self.keywords_len > 0 else self.plain_text
         )
@@ -125,13 +133,14 @@ class ChatData:
 
     @cached_property
     def to_me(self) -> bool:
-        bot_id = str(self.bot_id)
-        # 检查是否包含 At 组件
-        if (
-            f"[CQ:at,qq={bot_id}]" in self.raw_message
-            or "[CQ:at,qq=all]" in self.raw_message
-        ):
-            return True
+        """检查消息是否是发送给机器人的"""
+        if hasattr(self, "_event") and self._event:
+            message_chain = self._event.get_messages()
+            for comp in message_chain:
+                if isinstance(comp, At):
+                    if str(comp.qq) == str(self.bot_id) or str(comp.qq) == "all":
+                        return True
+        # 检查纯文本是否以 bot 开头
         return self.plain_text.strip().lower().startswith("bot")
 
 
@@ -157,8 +166,8 @@ class ChatConfig:
         self.split_probability = getattr(plugin_config, "split_probability", 0.5)
 
         # 数据保存相关
-        self.save_time_threshold = getattr(plugin_config, "save_time_threshold", 3600)
-        self.save_count_threshold = getattr(plugin_config, "save_count_threshold", 1000)
+        self.save_time_threshold = getattr(plugin_config, "save_time_threshold", 300)  # 5 分钟保存一次
+        self.save_count_threshold = getattr(plugin_config, "save_count_threshold", 50)  # 50 条消息保存一次
         self.save_reserved_size = getattr(plugin_config, "save_reserved_size", 100)
 
         # 图片学习相关
@@ -271,19 +280,21 @@ class Chat:
         self.state = get_global_state_manager(self.config)
 
         if isinstance(data, AstrMessageEvent):
-            plain_text, raw_message, message_type, image_info = (
+            plain_text, message_type, image_info, is_reply, has_media = (
                 self._extract_message_content(data)
             )
             self.chat_data = ChatData(
                 group_id=data.get_group_id(),
                 user_id=data.get_sender_id(),
-                raw_message=raw_message,
                 plain_text=plain_text,
                 time=data.message_obj.timestamp,
                 bot_id=data.get_self_id(),
                 message_type=message_type,
                 image_hash=image_info.get("hash") if image_info else None,
                 image_url=image_info.get("url") if image_info else None,
+                is_reply=is_reply,
+                has_media_content=has_media,
+                _event=data,
             )
             if self.config.debug_message_format:
                 self._log_message_structure(data)
@@ -332,86 +343,57 @@ class Chat:
 
     def _extract_message_content(
         self, event: AstrMessageEvent
-    ) -> tuple[str, str, str, dict | None]:
+    ) -> tuple[str, str, dict | None, bool, bool]:
         """
-        提取消息内容 - 增强版，支持多媒体
+        提取消息内容 - 完全结构化版本，支持多媒体
 
         Returns:
-            tuple: (plain_text, raw_message, message_type, image_info)
+            tuple: (plain_text, message_type, image_info, is_reply, has_media)
                 - plain_text: 纯文本内容
-                - raw_message: 格式化的消息字符串
                 - message_type: 消息类型 (text, image, record, video, file, mixed)
                 - image_info: 图片信息 {hash, url}
+                - is_reply: 是否是回复消息
+                - has_media: 是否包含多媒体内容
         """
         plain_text_parts = []
-        raw_message_parts = []
         message_chain = event.get_messages()
 
         has_image = False
         has_record = False
         has_video = False
         has_file = False
+        is_reply = False
         image_info: dict | None = None
 
         if not message_chain:
             plain_text = event.get_message_str() or ""
-            raw_message = (
-                str(event.message_obj.raw_message)
-                if event.message_obj.raw_message
-                else plain_text
-            )
-            return plain_text, raw_message, "text", None
+            return plain_text, "text", None, False, False
 
         for comp in message_chain:
             if isinstance(comp, Plain):
                 text = comp.text.strip()
                 if text:
                     plain_text_parts.append(text)
-                    raw_message_parts.append(text)
+            elif isinstance(comp, Reply):
+                # 使用结构化方式检测回复
+                is_reply = True
             elif isinstance(comp, Image):
                 has_image = True
                 image_url = comp.url or comp.file or ""
-                if image_url:
-                    # 规范化 URL
-                    normalized_url = re.sub(r"\.image,.+?\]", ".image]", image_url)
-                    raw_message_parts.append(f"[CQ:image,file={normalized_url}]")
-
+                if image_url and not image_info:
                     # 提取图片哈希或 URL
-                    if not image_info:
-                        image_info = {
-                            "url": image_url,
-                            "hash": self._compute_image_hash(image_url),
-                        }
-            elif isinstance(comp, Face):
-                raw_message_parts.append(f"[CQ:face,id={comp.id}]")
+                    image_info = {
+                        "url": image_url,
+                        "hash": self._compute_image_hash(image_url),
+                    }
             elif isinstance(comp, Record):
                 has_record = True
-                file_path = comp.file or ""
-                if file_path:
-                    raw_message_parts.append(f"[CQ:record,file={file_path}]")
             elif isinstance(comp, Video):
                 has_video = True
-                file_path = (
-                    getattr(comp, "file", None) or getattr(comp, "url", None) or ""
-                )
-                if file_path:
-                    raw_message_parts.append(f"[CQ:video,file={file_path}]")
             elif isinstance(comp, File):
                 has_file = True
-                file_name = comp.name or "unknown"
-                if file_name:
-                    raw_message_parts.append(f"[CQ:file,name={file_name}]")
 
         plain_text = " ".join(plain_text_parts)
-        raw_message = "".join(raw_message_parts)
-
-        if not raw_message:
-            raw_message = (
-                str(event.message_obj.raw_message)
-                if event.message_obj.raw_message
-                else ""
-            )
-            raw_message = re.sub(r"\.image,.+?\]", ".image]", raw_message)
 
         if not plain_text:
             plain_text = event.get_message_str() or ""
@@ -421,7 +403,10 @@ class Chat:
             has_image, has_record, has_video, has_file, bool(plain_text)
         )
 
-        return plain_text, raw_message, message_type, image_info
+        # 判断是否包含媒体内容
+        has_media = has_image or has_record or has_video or has_file
+
+        return plain_text, message_type, image_info, is_reply, has_media
 
     def _determine_message_type(
         self,
@@ -455,9 +440,40 @@ class Chat:
         url_parts = image_url.split("/")[-1] if "/" in image_url else image_url
         return hashlib.md5(url_parts.encode()).hexdigest()[:16]
 
+    def _build_raw_message_description(self) -> str:
+        """
+        构建原始消息的结构化描述（用于调试和日志）
+
+        由于我们使用结构化组件，不再存储 CQ 码字符串，
+        此方法生成一个人类可读的消息描述。
+        """
+        parts = []
+
+        # 添加纯文本部分
+        if self.chat_data.plain_text:
+            parts.append(self.chat_data.plain_text[:50])  # 限制长度
+
+        # 添加媒体类型标记
+        if self.chat_data.is_image:
+            parts.append(
+                f"[图片:{self.chat_data.image_url or self.chat_data.image_hash}]"
+            )
+        elif self.chat_data.is_record:
+            parts.append("[语音]")
+        elif self.chat_data.is_video:
+            parts.append("[视频]")
+        elif self.chat_data.is_file:
+            parts.append("[文件]")
+
+        return " ".join(parts) if parts else ""
+
     async def learn(self) -> bool:
         """学习消息 - 增强版"""
-        if len(self.chat_data.raw_message.strip()) == 0:
+        # 检查消息是否为空（纯文本和多媒体内容都为空）
+        if (
+            len(self.chat_data.plain_text.strip()) == 0
+            and not self.chat_data.has_media()
+        ):
             return False
 
         # 检查是否启用图片学习
@@ -504,7 +520,7 @@ class Chat:
             bot_id,
             {
                 "time": int(time.time()),
-                "pre_raw_message": self.chat_data.raw_message,
+                "pre_plain_text": self.chat_data.plain_text,
                 "pre_keywords": self.chat_data.keywords,
                 "reply": self.REPLY_FLAG,
                 "reply_keywords": self.REPLY_FLAG,
@@ -517,14 +533,14 @@ class Chat:
                 bot_id,
                 {
                     "time": int(time.time()),
-                    "pre_raw_message": self.chat_data.raw_message,
+                    "pre_plain_text": self.chat_data.plain_text,
                     "pre_keywords": self.chat_data.keywords,
                     "reply": item,
                     "reply_keywords": answer_keywords,
                 },
             )
 
-            if "[CQ:" not in item:
+            if not self.chat_data.has_media():
                 await self.state.add_topics(
                     group_id,
                     [k for k in answer_keywords.split(" ") if not k.startswith("bot")],
@@ -537,13 +553,16 @@ class Chat:
         """插入消息到缓存并检查是否需要持久化"""
         group_id = self.chat_data.group_id
 
+        # 构建原始消息的结构化描述（用于调试和日志）
+        raw_message_desc = self._build_raw_message_description()
+
         await self.state.add_message(
             group_id,
             MessageModel(
                 group_id=group_id,
                 user_id=self.chat_data.user_id,
                 bot_id=self.chat_data.bot_id,
-                raw_message=self.chat_data.raw_message,
+                raw_message=raw_message_desc,
                 is_plain_text=self.chat_data.is_plain_text,
                 plain_text=self.chat_data.plain_text,
                 keywords=self.chat_data.keywords,
@@ -557,15 +576,38 @@ class Chat:
         cur_time = self.chat_data.time
         if self.state._late_save_time == 0:
             self.state._late_save_time = cur_time - 1
+            logger.debug(
+                "chatimitate: 首次记录消息，设置保存时间标记为 %s",
+                self.state._late_save_time,
+            )
             return
 
-        if (
-            len(self.state.get_group_messages(group_id))
-            > self.config.save_count_threshold
-        ):
+        # 检查是否需要保存到数据库
+        group_msgs = self.state.get_group_messages(group_id)
+        msg_count = len(group_msgs)
+        time_diff = cur_time - self.state._late_save_time
+
+        if msg_count > self.config.save_count_threshold:
+            logger.info(
+                "chatimitate: 消息数量达到阈值 (%d > %d)，保存到数据库",
+                msg_count,
+                self.config.save_count_threshold,
+            )
             await self.state._sync(cur_time)
-        elif cur_time - self.state._late_save_time > self.config.save_time_threshold:
+        elif time_diff > self.config.save_time_threshold:
+            logger.info(
+                "chatimitate: 距离上次保存超过阈值 (%d 秒 > %d 秒)，保存到数据库",
+                time_diff,
+                self.config.save_time_threshold,
+            )
             await self.state._sync(cur_time)
+        else:
+            # 调试日志，显示当前缓存状态
+            logger.debug(
+                "chatimitate: 消息已缓存 (%d 条，距离上次保存 %d 秒)，未达到保存阈值",
+                msg_count,
+                time_diff,
+            )
 
     async def _context_insert(self, pre_msg: MessageModel | None):
         """插入上下文关系"""
@@ -573,7 +615,11 @@ class Chat:
             return
 
         plain_text = self.chat_data.plain_text
-        if pre_msg.plain_text == plain_text or "[CQ:reply," in plain_text:
+        if pre_msg.plain_text == plain_text:
+            return
+
+        # 使用结构化方式检查是否有回复组件
+        if self.chat_data.is_reply:
             return
 
         keywords = self.chat_data.keywords
@@ -686,7 +732,9 @@ class Chat:
 
         def candidate_append(dst: dict[str, Answer], answer: Answer):
             answer_key = answer.keywords
-            if "[CQ:" not in answer_key and not answer_key.startswith("["):
+            # 检查是否是纯文本关键词（不是多媒体消息）
+            is_pure_text = not answer_key.startswith("[")
+            if is_pure_text:
                 topics = self.state._recent_topics[group_id]
                 for key in answer_key.split(" "):
                     if key in topics:
@@ -713,28 +761,23 @@ class Chat:
 
             sample_msg = answer.messages[0]
             # 优化：支持多媒体消息类型检测
-            if (
-                self.chat_data.is_image
-                and "[CQ:" not in sample_msg
-                and not sample_msg.startswith("[图片]")
-            ):
+            if self.chat_data.is_image and not sample_msg.startswith("[图片]"):
                 continue
             if sample_msg.startswith("bot") and (
                 not self.chat_data.to_me or len(sample_msg) <= 6
             ):
                 continue
-            if sample_msg.startswith("[CQ:xml"):
-                continue
             if "\n" in sample_msg:
                 continue
-            if "[CQ:" not in sample_msg and sample_msg.strip().isdigit():
+            if sample_msg.strip().isdigit():
                 continue
             if answer.count < 3 and sample_msg in recent_message:
                 continue
 
             if answer.group_id == group_id:
                 candidate_append(candidate_answers, answer)
-            elif "[CQ:at,qq=" in sample_msg:
+            elif sample_msg.startswith("[at:"):
+                # 结构化 At 检测
                 continue
             else:
                 answers_count[answer_key] += 1
@@ -770,7 +813,6 @@ class Chat:
 
         if (
             0 < answer_str.count(",") <= 3
-            and "[CQ:" not in answer_str
             and not answer_str.startswith("[")
             and random.random() < self.config.split_probability
         ):
