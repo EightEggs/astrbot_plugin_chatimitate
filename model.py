@@ -230,7 +230,7 @@ class ChatStateManager:
             cur_time = int(time.time())
 
         async with self._message_lock:
-            # 只保存时间戳大于 _late_save_time 的新消息
+            # 保存所有时间戳大于 _late_save_time 的消息
             save_list = [
                 msg
                 for group_msgs in self._message_dict.values()
@@ -241,9 +241,12 @@ class ChatStateManager:
                 logger.debug("chatimitate: 没有新消息需要保存")
                 return
 
-            # 更新 _late_save_time 为最后一条消息的时间，而不是当前时间
-            # 这样可以确保每条消息只保存一次
-            self._late_save_time = max(msg.time for msg in save_list)
+            # 记录保存前的 _late_save_time
+            old_save_time = self._late_save_time
+
+            # 更新 _late_save_time 为最后一条消息的时间 + 1
+            # 使用 +1 确保相同时间戳的消息也能被保存
+            self._late_save_time = max(msg.time for msg in save_list) + 1
 
             # 保留最近的消息在内存中
             new_dict = {
@@ -256,10 +259,11 @@ class ChatStateManager:
         # 保存到数据库
         if self.config.debug_message_format:
             logger.info(
-                "chatimitate: 保存 %d 条新消息到数据库（时间戳范围：%d - %d）",
+                "chatimitate: 保存 %d 条新消息到数据库（时间戳范围：%d - %d，上次保存时间：%d）",
                 len(save_list),
                 min(msg.time for msg in save_list),
-                self._late_save_time,
+                max(msg.time for msg in save_list),
+                old_save_time,
             )
         for msg in save_list:
             await db.db_operations.save_message(msg)
@@ -591,13 +595,15 @@ class Chat:
             await self.state.add_topics(group_id, self.chat_data._keywords_list)
 
         cur_time = self.chat_data.time
+
+        # 首次记录消息时，初始化 _late_save_time
         if self.state._late_save_time == 0:
             self.state._late_save_time = cur_time - 1
             logger.debug(
                 "chatimitate: 首次记录消息，设置保存时间标记为 %s",
                 self.state._late_save_time,
             )
-            return
+            # 不要直接返回，继续检查是否需要保存
 
         # 检查是否需要保存到数据库
         group_msgs = self.state.get_group_messages(group_id)
