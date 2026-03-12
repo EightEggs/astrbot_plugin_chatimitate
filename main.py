@@ -31,11 +31,7 @@ class ChatImitate(Star):
     async def initialize(self):
         """异步初始化"""
         await init_db(self.name)
-
-        try:
-            await Chat.update_global_blacklist()
-        except Exception:
-            logger.warning("chatimitate: update_global_blacklist failed", exc_info=True)
+        # 已移除 update_global_blacklist 调用，因为删除了 group_blacklist 表
 
         self._bg_task = asyncio.create_task(self._periodic_maintenance())
 
@@ -99,7 +95,7 @@ class ChatImitate(Star):
 
         try:
             await chat.learn()
-
+            
             # 直接使用 async for 遍历 answer() 生成器
             async for msg in chat.answer():
                 message_chain = self._parse_message(msg)

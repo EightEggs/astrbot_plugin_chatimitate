@@ -23,7 +23,6 @@ AstrBot ChatImitate Plugin - Database Module
    说明：只保留这一个禁用表，每个群可以有自己的禁用列表
 """
 
-import json
 import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
@@ -32,6 +31,21 @@ import aiosqlite
 
 from astrbot.api import logger
 from astrbot.api.star import StarTools
+
+# 消息分隔符 - 用于在数据库中存储消息列表
+MESSAGE_SEPARATOR = "\x00"  # 使用 NULL 字符作为分隔符，避免与正常文本冲突
+
+
+def serialize_messages(messages: list[str]) -> str:
+    """将消息列表序列化为字符串存储"""
+    return MESSAGE_SEPARATOR.join(messages)
+
+
+def deserialize_messages(data: str) -> list[str]:
+    """将存储的字符串反序列化为消息列表"""
+    if not data:
+        return []
+    return data.split(MESSAGE_SEPARATOR)
 
 
 @dataclass
@@ -138,7 +152,7 @@ class DatabaseManager:
                 group_id TEXT NOT NULL,           -- 来源群组 ID
                 count INTEGER DEFAULT 1,          -- 使用次数（越大约常用）
                 time INTEGER DEFAULT (strftime('%s', 'now')),  -- 最后使用时间
-                messages TEXT DEFAULT '[]',       -- 实际回复内容列表（JSON 格式）
+                messages TEXT DEFAULT '',         -- 实际回复内容列表（使用分隔符存储）
                 topical INTEGER DEFAULT 0,        -- 话题相关度权重
                 created_at INTEGER DEFAULT (strftime('%s', 'now')),  -- 创建时间
                 FOREIGN KEY (context_id) REFERENCES trigger_keywords (id) ON DELETE CASCADE
@@ -192,16 +206,6 @@ class DatabaseOperations:
 
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
-
-    @staticmethod
-    def _json_serialize(data: object) -> str:
-        """序列化 JSON 数据"""
-        return json.dumps(data, ensure_ascii=False)
-
-    @staticmethod
-    def _json_deserialize(json_str: str) -> object:
-        """反序列化 JSON 数据"""
-        return json.loads(json_str) if json_str else None
 
     async def save_message(self, message: ChatMessage) -> int:
         """保存聊天记录到数据库"""
@@ -269,9 +273,7 @@ class DatabaseOperations:
             "SELECT * FROM reply_contents WHERE context_id = ?", (trigger_row["id"],)
         ) as cursor:
             async for row in cursor:
-                messages_data = self._json_deserialize(row["messages"])
-                if not isinstance(messages_data, list):
-                    messages_data = []
+                messages_data = deserialize_messages(row["messages"])
                 replies.append(
                     ReplyContent(
                         keywords=row["keywords"],
@@ -348,7 +350,7 @@ class DatabaseOperations:
                             reply.group_id,
                             reply.count,
                             reply.time,
-                            self._json_serialize(reply.messages),
+                            serialize_messages(reply.messages),
                             reply.topical,
                         )
                         for reply in trigger.replies
@@ -483,15 +485,11 @@ class DatabaseOperations:
             async for row in cursor:
                 messages_str = row["messages"]
                 if messages_str:
-                    try:
-                        messages = self._json_deserialize(messages_str)
-                        if isinstance(messages, list):
-                            # 检查回复内容是否在 messages 列表中
-                            for msg in messages:
-                                if msg and reply_message in msg:
-                                    return row["context_id"]
-                    except Exception:
-                        continue
+                    messages = deserialize_messages(messages_str)
+                    # 检查回复内容是否在 messages 列表中
+                    for msg in messages:
+                        if msg and reply_message in msg:
+                            return row["context_id"]
 
         # 方法 2：如果方法 1 没找到，尝试使用回复内容作为关键词查找
         # 这是备选方案

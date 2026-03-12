@@ -485,7 +485,7 @@ class Chat:
         await self._message_insert()
         return True
 
-    async def answer(self) -> AsyncGenerator[str, None] | None:
+    async def answer(self) -> AsyncGenerator[str, None]:
         """回复消息 - 增强版"""
         # 不过滤短消息，因为可能是图片或语音
         if self.chat_data.is_plain_text and len(self.chat_data.plain_text) < 2:
