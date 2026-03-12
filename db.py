@@ -258,8 +258,7 @@ class DatabaseOperations:
                         group_id=str(row["group_id"]),
                         count=row["count"],
                         time=row["time"],
-                        messages=self._json_deserialize(row["messages"]),
-                        topical=row["topical"],
+                        messages=self._json_deserialize(row["messages"]),  # type: ignore
                     )
                 )
 
@@ -351,8 +350,8 @@ class DatabaseOperations:
             if row:
                 return BlackList(
                     group_id=str(row["group_id"]),
-                    answers=self._json_deserialize(row["answers"]),
-                    answers_reserve=self._json_deserialize(row["answers_reserve"]),
+                    answers=self._json_deserialize(row["answers"]),  # type: ignore
+                    answers_reserve=self._json_deserialize(row["answers_reserve"]),  # type: ignore
                 )
         return None
 

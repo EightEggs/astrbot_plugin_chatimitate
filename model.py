@@ -351,7 +351,7 @@ class Chat:
                     raw_message_parts.append(f"[CQ:record,file={file_path}]")
             elif isinstance(comp, Video):
                 has_video = True
-                file_path = comp.file or comp.url or ""
+                file_path = getattr(comp, "file", None) or getattr(comp, "url", None) or ""
                 if file_path:
                     raw_message_parts.append(f"[CQ:video,file={file_path}]")
             elif isinstance(comp, File):
@@ -447,11 +447,11 @@ class Chat:
         """回复消息 - 增强版"""
         # 不过滤短消息，因为可能是图片或语音
         if self.chat_data.is_plain_text and len(self.chat_data.plain_text) < 2:
-            return None
+            return
 
         results = await self._context_find()
         if not results:
-            return None
+            return
 
         answer_list, answer_keywords = results
         group_id = self.chat_data.group_id
@@ -776,16 +776,16 @@ class Chat:
                 if keywords_dict[keywords] == 2:
                     global_blacklist.add(keywords)
 
-        Chat._blacklist_answer()[Chat.BLACKLIST_FLAG] |= global_blacklist
+        Chat._blacklist_answer()[str(Chat.BLACKLIST_FLAG)] |= global_blacklist
 
     @staticmethod
     def _blacklist_answer() -> defaultdict[str, set[str]]:
         from . import model as model_mod
 
         if hasattr(model_mod, "_global_blacklist"):
-            return model_mod._global_blacklist
-        model_mod._global_blacklist = defaultdict(set)
-        return model_mod._global_blacklist
+            return model_mod._global_blacklist  # type: ignore
+        else: 
+            return defaultdict(set)
 
     @staticmethod
     async def _select_blacklist() -> None:
@@ -823,7 +823,7 @@ class Chat:
     async def _find_ban_keywords(context: Context | None, group_id: str) -> set[str]:
         """查找禁用的关键词"""
         blacklist_dict = Chat._blacklist_answer()
-        ban_keywords = blacklist_dict[Chat.BLACKLIST_FLAG] | blacklist_dict[group_id]
+        ban_keywords = blacklist_dict[str(Chat.BLACKLIST_FLAG)] | blacklist_dict[group_id]
 
         if context is not None and context.ban:
             ban_count: defaultdict[str, int] = defaultdict(int)

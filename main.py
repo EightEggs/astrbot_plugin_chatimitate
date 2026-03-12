@@ -106,7 +106,7 @@ class ChatImitate(Star):
         if not answers:
             return
 
-        for msg in answers:
+        async for msg in answers:
             message_chain = self._parse_message(msg)
             if message_chain:
                 await event.send(message_chain)
