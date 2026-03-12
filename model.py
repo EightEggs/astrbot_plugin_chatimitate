@@ -230,12 +230,13 @@ class ChatStateManager:
             cur_time = int(time.time())
 
         async with self._message_lock:
-            # 保存所有时间戳大于 _late_save_time 的消息
+            # 保存所有时间戳 >= _late_save_time 的消息
+            # 使用 >= 而不是 >，确保相同时间戳的消息也能被保存
             save_list = [
                 msg
                 for group_msgs in self._message_dict.values()
                 for msg in group_msgs
-                if msg.time > self._late_save_time
+                if msg.time >= self._late_save_time
             ]
             if not save_list:
                 logger.debug("chatimitate: 没有新消息需要保存")
@@ -245,7 +246,7 @@ class ChatStateManager:
             old_save_time = self._late_save_time
 
             # 更新 _late_save_time 为最后一条消息的时间 + 1
-            # 使用 +1 确保相同时间戳的消息也能被保存
+            # 使用 +1 确保下次保存时不会重复保存相同时间戳的消息
             self._late_save_time = max(msg.time for msg in save_list) + 1
 
             # 保留最近的消息在内存中
