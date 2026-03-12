@@ -1,6 +1,5 @@
 """
 AstrBot ChatImitate Plugin - Main Module
-聊天模仿插件主入口 - 完全结构化版本，使用框架原生 API
 """
 
 import asyncio
@@ -30,7 +29,6 @@ class ChatImitate(Star):
     async def initialize(self):
         """异步初始化"""
         await init_db(self.name)
-        # 已移除 update_global_blacklist 调用，因为删除了 group_blacklist 表
 
         self._bg_task = asyncio.create_task(self._periodic_maintenance())
 
@@ -59,28 +57,35 @@ class ChatImitate(Star):
             logger.debug("chatimitate: db close failed", exc_info=True)
 
     async def _periodic_maintenance(self) -> None:
-        """定期维护任务"""
+        """
+        定期维护任务
+        """
         last_cleanup_day: int | None = None
+
+        # 从配置中读取保存间隔（秒）
+        storage_config = self.config.get("storage", {})
+        save_interval = storage_config.get("save_time_threshold", 300)
+
         while not self._stop_event.is_set():
             try:
-                # 每 5 分钟同步一次数据到数据库
+                # 同步数据到数据库（频率由 save_interval 控制）
                 await Chat.sync()
             except Exception:
                 logger.warning("chatimitate: periodic sync failed", exc_info=True)
 
+            # 每天执行一次过期数据清理
             today = int(time.strftime("%Y%m%d"))
             if last_cleanup_day != today:
                 try:
-                    # 使用配置中的清理天数
-                    cleanup_days = getattr(self.config, "cleanup_expired_days", 15)
+                    cleanup_days = storage_config.get("cleanup_expired_days", 15)
                     await Chat.clearup_context(cleanup_days)
                     last_cleanup_day = today
                 except Exception:
                     logger.warning("chatimitate: clearup_context failed", exc_info=True)
 
-            # 每 5 分钟检查一次，确保数据及时保存
+            # 等待配置的间隔时间
             try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=300)
+                await asyncio.wait_for(self._stop_event.wait(), timeout=save_interval)
             except asyncio.TimeoutError:
                 continue
 
@@ -113,7 +118,7 @@ class ChatImitate(Star):
         构建消息链 - 完全结构化版本
 
         根据存储的消息内容重建 MessageChain。
-        由于数据库存储的是结构化描述，我们需要根据描述重建消息组件。
+        只发送真实的内容（纯文本或有效图片），不发送任何占位符。
 
         Args:
             msg: 消息字符串（可能是纯文本或多媒体标记）
@@ -128,25 +133,37 @@ class ChatImitate(Star):
 
         # 纯文本消息（不包含任何标记）
         if not msg.startswith("["):
-            components.append(Plain(msg))
-            return MessageChain(components)
+            # 只发送非空的纯文本
+            if msg.strip():
+                components.append(Plain(msg))
+                return MessageChain(components)
+            return None
 
         # 处理多媒体消息标记
         # 格式：[类型：内容]
-        if msg.startswith("[图片]"):
-            # 图片消息，从标记中提取 URL
-            image_url = msg.replace("[图片]", "").strip()
+        if msg.startswith("[图片:"):
+            # 图片消息，从标记中提取 URL 或 hash
+            # 格式：[图片:url] 或 [图片:hash]
+            image_url = msg[5:-1] if msg.endswith("]") else msg[5:]
             if image_url:
-                components.append(Image(file=image_url, url=image_url))
-            else:
-                # 如果没有 URL，使用占位符
-                components.append(Plain("[图片]"))
+                # 如果是 http 或 https 开头，作为 URL 处理
+                if image_url.startswith("http://") or image_url.startswith("https://"):
+                    components.append(Image(file=image_url, url=image_url))
+                else:
+                    # 否则作为文件路径或 base64 处理
+                    components.append(Image(file=image_url))
+                return MessageChain(components)
+            # 如果没有有效 URL，不发送任何内容
+            return None
         elif msg.startswith("[语音]"):
-            components.append(Plain("[语音消息]"))
+            # 语音消息不发送占位符
+            return None
         elif msg.startswith("[视频]"):
-            components.append(Plain("[视频消息]"))
+            # 视频消息不发送占位符
+            return None
         elif msg.startswith("[文件]"):
-            components.append(Plain("[文件消息]"))
+            # 文件消息不发送占位符
+            return None
         elif msg.startswith("[at:"):
             # At 消息，格式：[at:qq_id]
             qq_id = msg[4:-1]  # 提取 qq_id
@@ -156,16 +173,20 @@ class ChatImitate(Star):
                 components.append(AtAll())
             else:
                 components.append(At(qq=qq_id))
+            return MessageChain(components)
         elif msg.startswith("[face:"):
             # 表情消息，格式：[face:id]
             face_id = msg[6:-1]
             if face_id.isdigit():
                 components.append(Face(id=int(face_id)))
+                return MessageChain(components)
+            return None
         else:
             # 未知格式，作为纯文本处理
-            components.append(Plain(msg))
-
-        return MessageChain(components) if components else None
+            if msg.strip():
+                components.append(Plain(msg))
+                return MessageChain(components)
+            return None
 
     async def _handle_admin_disable(self, event: AstrMessageEvent) -> bool:
         """

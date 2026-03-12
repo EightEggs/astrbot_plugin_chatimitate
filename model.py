@@ -628,6 +628,14 @@ class Chat:
         pre_keywords = pre_msg.keywords
         cur_time = self.chat_data.time
 
+        # 构建要存储的回复内容
+        # 对于图片消息，存储格式为 "[图片:hash]" 或 "[图片:url]"
+        reply_content = plain_text
+        if self.chat_data.is_image and self.chat_data.image_hash:
+            reply_content = f"[图片:{self.chat_data.image_hash}]"
+        elif self.chat_data.is_image and self.chat_data.image_url:
+            reply_content = f"[图片:{self.chat_data.image_url}]"
+
         context = await db.db_operations.get_trigger_keyword(pre_keywords)
         if context:
             answer_index = next(
@@ -641,8 +649,12 @@ class Chat:
             if answer_index != -1:
                 context.replies[answer_index].count += 1
                 context.replies[answer_index].time = cur_time
-                if self.chat_data.is_plain_text:
-                    context.replies[answer_index].messages.append(plain_text)
+                # 纯文本和图片都要添加到 messages 列表中
+                if (
+                    reply_content
+                    and reply_content not in context.replies[answer_index].messages
+                ):
+                    context.replies[answer_index].messages.append(reply_content)
             else:
                 context.replies.append(
                     Answer(
@@ -650,7 +662,7 @@ class Chat:
                         group_id=group_id,
                         count=1,
                         time=cur_time,
-                        messages=[plain_text],
+                        messages=[reply_content],
                     )
                 )
             context.time = cur_time
@@ -667,7 +679,7 @@ class Chat:
                         group_id=group_id,
                         count=1,
                         time=cur_time,
-                        messages=[plain_text],
+                        messages=[reply_content],
                     )
                 ],
             )
