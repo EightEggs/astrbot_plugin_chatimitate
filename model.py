@@ -145,7 +145,7 @@ class ChatData:
 
 
 class ChatConfig:
-    """聊天配置管理类 - 精简版"""
+    """聊天配置管理类 - 支持嵌套配置"""
 
     def __init__(self, plugin_config: AstrBotConfig):
         # 调试相关
@@ -153,32 +153,31 @@ class ChatConfig:
             plugin_config, "debug_message_format", False
         )
 
-        # 回复控制相关
-        self.answer_threshold = getattr(plugin_config, "answer_threshold", 3)
-        self.answer_threshold_weights = getattr(
-            plugin_config, "answer_threshold_weights", [7, 23, 70]
+        # 从嵌套的 object 中读取配置
+        # learning 分组
+        learning_config = plugin_config.get("learning", {})
+        self.answer_threshold = learning_config.get("answer_threshold", 3)
+        self.answer_threshold_weights = learning_config.get(
+            "answer_threshold_weights", [7, 23, 70]
         )
-        self.topics_size = getattr(plugin_config, "topics_size", 16)
-        self.topics_importance = getattr(plugin_config, "topics_importance", 10000)
-        self.cross_group_threshold = getattr(plugin_config, "cross_group_threshold", 2)
-        self.duplicate_reply = getattr(plugin_config, "duplicate_reply", 10)
-        self.split_probability = getattr(plugin_config, "split_probability", 0.5)
+        self.topics_size = learning_config.get("topics_size", 16)
+        self.topics_importance = learning_config.get("topics_importance", 10000)
+        self.cross_group_threshold = learning_config.get("cross_group_threshold", 2)
+        self.duplicate_reply = learning_config.get("duplicate_reply", 10)
+        self.split_probability = learning_config.get("split_probability", 0.5)
 
-        # 数据保存相关
-        self.save_time_threshold = getattr(
-            plugin_config, "save_time_threshold", 300
-        )  # 5 分钟保存一次
-        self.save_count_threshold = getattr(
-            plugin_config, "save_count_threshold", 50
-        )  # 50 条消息保存一次
-        self.save_reserved_size = getattr(plugin_config, "save_reserved_size", 100)
+        # storage 分组
+        storage_config = plugin_config.get("storage", {})
+        self.save_time_threshold = storage_config.get("save_time_threshold", 300)
+        self.save_count_threshold = storage_config.get("save_count_threshold", 50)
+        self.save_reserved_size = storage_config.get("save_reserved_size", 100)
+        self.cleanup_expired_days = storage_config.get("cleanup_expired_days", 15)
 
-        # 图片学习相关
-        self.enable_image_learning = getattr(
-            plugin_config, "enable_image_learning", True
-        )
-        self.image_similarity_threshold = getattr(
-            plugin_config, "image_similarity_threshold", 0.8
+        # media 分组
+        media_config = plugin_config.get("media", {})
+        self.enable_image_learning = media_config.get("enable_image_learning", True)
+        self.image_similarity_threshold = media_config.get(
+            "image_similarity_threshold", 0.8
         )
 
     @property
