@@ -319,27 +319,46 @@ class DatabaseOperations:
 
         # 获取触发关键词 ID
         async with conn.execute(
-            "SELECT id FROM trigger_keywords WHERE keywords = ?", (trigger.keywords,)
+            "SELECT id FROM trigger_keywords WHERE keywords = ? AND updated_at = (SELECT updated_at FROM trigger_keywords WHERE keywords = ?)",
+            (trigger.keywords, trigger.keywords)
         ) as cursor:
             context_id_row = await cursor.fetchone()
             context_id = context_id_row["id"] if context_id_row else None
 
         if context_id:
-            # 删除旧的回复和禁用记录
-            await conn.execute(
-                "DELETE FROM reply_contents WHERE context_id = ?", (context_id,)
-            )
-            await conn.execute(
-                "DELETE FROM disabled_replies WHERE context_id = ?", (context_id,)
-            )
+            # 为了高效，我们只更新变化的部分
+            # 首先查询现有的回复
+            existing_replies = {}
+            async with conn.execute(
+                "SELECT keywords, id FROM reply_contents WHERE context_id = ?",
+                (context_id,),
+            ) as cursor:
+                async for row in cursor:
+                    existing_replies[row["keywords"]] = row["id"]
 
-            # 批量插入新的回复内容
-            if trigger.replies:
-                await conn.executemany(
-                    """INSERT INTO reply_contents
-                    (context_id, keywords, group_id, count, time, messages, topical)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    [
+            # 批量处理回复内容 - 只更新/插入必要的内容
+            for reply in trigger.replies:
+                if reply.keywords in existing_replies:
+                    # 更新现有回复
+                    await conn.execute(
+                        """UPDATE reply_contents SET
+                        group_id = ?, count = ?, time = ?, messages = ?, topical = ?, updated_at = strftime('%s', 'now')
+                        WHERE id = ?""",
+                        (
+                            reply.group_id,
+                            reply.count,
+                            reply.time,
+                            serialize_messages(reply.messages),
+                            reply.topical,
+                            existing_replies[reply.keywords],
+                        ),
+                    )
+                else:
+                    # 插入新回复
+                    await conn.execute(
+                        """INSERT INTO reply_contents
+                        (context_id, keywords, group_id, count, time, messages, topical, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'))""",
                         (
                             context_id,
                             reply.keywords,
@@ -348,28 +367,65 @@ class DatabaseOperations:
                             reply.time,
                             serialize_messages(reply.messages),
                             reply.topical,
-                        )
-                        for reply in trigger.replies
-                    ],
-                )
+                        ),
+                    )
 
-            # 批量插入新的禁用记录
-            if trigger.disabled:
-                await conn.executemany(
-                    """INSERT INTO disabled_replies
-                    (context_id, keywords, group_id, reason, time)
-                    VALUES (?, ?, ?, ?, ?)""",
-                    [
+            # 删除不再需要的回复
+            current_reply_keywords = {reply.keywords for reply in trigger.replies}
+            for existing_keyword, existing_id in existing_replies.items():
+                if existing_keyword not in current_reply_keywords:
+                    await conn.execute(
+                        "DELETE FROM reply_contents WHERE id = ?", (existing_id,)
+                    )
+
+            # 批量处理禁用记录 - 类似的方式
+            existing_disabled = {}
+            async with conn.execute(
+                "SELECT keywords, id FROM disabled_replies WHERE context_id = ?",
+                (context_id,),
+            ) as cursor:
+                async for row in cursor:
+                    existing_disabled[row["keywords"]] = row["id"]
+
+            # 批量处理禁用记录
+            for disabled in trigger.disabled:
+                if disabled.keywords in existing_disabled:
+                    # 更新现有禁用记录
+                    await conn.execute(
+                        """UPDATE disabled_replies SET
+                        group_id = ?, reason = ?, time = ?, updated_at = strftime('%s', 'now')
+                        WHERE id = ?""",
+                        (
+                            disabled.group_id,
+                            disabled.reason,
+                            disabled.time,
+                            existing_disabled[disabled.keywords],
+                        ),
+                    )
+                else:
+                    # 插入新禁用记录
+                    await conn.execute(
+                        """INSERT INTO disabled_replies
+                        (context_id, keywords, group_id, reason, time, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'))""",
                         (
                             context_id,
                             disabled.keywords,
                             disabled.group_id,
                             disabled.reason,
                             disabled.time,
-                        )
-                        for disabled in trigger.disabled
-                    ],
-                )
+                        ),
+                    )
+
+            # 删除不再需要的禁用记录
+            current_disabled_keywords = {
+                disabled.keywords for disabled in trigger.disabled
+            }
+            for existing_keyword, existing_id in existing_disabled.items():
+                if existing_keyword not in current_disabled_keywords:
+                    await conn.execute(
+                        "DELETE FROM disabled_replies WHERE id = ?", (existing_id,)
+                    )
 
         await conn.commit()
 

@@ -489,17 +489,12 @@ class Chat:
         group_id = self.chat_data.group_id
         group_msgs = self.state.get_group_messages(group_id)
 
+        # 只调用一次 _context_insert，学习前一条消息
         if group_msgs:
             group_pre_msg = group_msgs[-1]
             await self._context_insert(group_pre_msg)
 
-            user_id = self.chat_data.user_id
-            if group_pre_msg and group_pre_msg.user_id != user_id:
-                for msg in reversed(group_msgs[-3:]):
-                    if msg.user_id == user_id:
-                        await self._context_insert(msg)
-                        break
-
+        # 插入当前消息到缓存
         await self._message_insert()
         return True
 
@@ -636,26 +631,28 @@ class Chat:
         elif self.chat_data.is_image and self.chat_data.image_url:
             reply_content = f"[图片:{self.chat_data.image_url}]"
 
+        # 检查是否已经存在相同的回复
         context = await db.db_operations.get_trigger_keyword(pre_keywords)
         if context:
-            answer_index = next(
+            # 检查是否已存在相同的回复
+            existing_reply = next(
                 (
-                    idx
-                    for idx, answer in enumerate(context.replies)
+                    answer
+                    for answer in context.replies
                     if answer.group_id == group_id and answer.keywords == keywords
                 ),
-                -1,
+                None,
             )
-            if answer_index != -1:
-                context.replies[answer_index].count += 1
-                context.replies[answer_index].time = cur_time
-                # 纯文本和图片都要添加到 messages 列表中
-                if (
-                    reply_content
-                    and reply_content not in context.replies[answer_index].messages
-                ):
-                    context.replies[answer_index].messages.append(reply_content)
+
+            if existing_reply:
+                # 回复已存在，只更新计数和时间
+                existing_reply.count += 1
+                existing_reply.time = cur_time
+                # 避免重复添加相同的回复内容
+                if reply_content and reply_content not in existing_reply.messages:
+                    existing_reply.messages.append(reply_content)
             else:
+                # 添加新的回复
                 context.replies.append(
                     Answer(
                         keywords=keywords,
@@ -665,10 +662,12 @@ class Chat:
                         messages=[reply_content],
                     )
                 )
+
             context.time = cur_time
             context.trigger_count += 1
             await db.db_operations.save_trigger_keyword(context)
         else:
+            # 创建新的触发关键词
             context = Context(
                 keywords=pre_keywords,
                 time=cur_time,
