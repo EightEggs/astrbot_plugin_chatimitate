@@ -161,13 +161,16 @@ class ChatConfig:
         self.topics_size = getattr(plugin_config, "topics_size", 16)
         self.topics_importance = getattr(plugin_config, "topics_importance", 10000)
         self.cross_group_threshold = getattr(plugin_config, "cross_group_threshold", 2)
-        self.repeat_threshold = getattr(plugin_config, "repeat_threshold", 3)
         self.duplicate_reply = getattr(plugin_config, "duplicate_reply", 10)
         self.split_probability = getattr(plugin_config, "split_probability", 0.5)
 
         # 数据保存相关
-        self.save_time_threshold = getattr(plugin_config, "save_time_threshold", 300)  # 5 分钟保存一次
-        self.save_count_threshold = getattr(plugin_config, "save_count_threshold", 50)  # 50 条消息保存一次
+        self.save_time_threshold = getattr(
+            plugin_config, "save_time_threshold", 300
+        )  # 5 分钟保存一次
+        self.save_count_threshold = getattr(
+            plugin_config, "save_count_threshold", 50
+        )  # 50 条消息保存一次
         self.save_reserved_size = getattr(plugin_config, "save_reserved_size", 100)
 
         # 图片学习相关
@@ -675,24 +678,8 @@ class Chat:
     async def _context_find(self) -> tuple[list[str], str] | None:
         """查找上下文并生成回复"""
         group_id = self.chat_data.group_id
-        plain_text = self.chat_data.plain_text
         keywords = self.chat_data.keywords
         bot_id = self.chat_data.bot_id
-
-        # 复读检测
-        if group_id in self.state._message_dict:
-            group_msgs = self.state._message_dict[group_id]
-            if len(group_msgs) >= self.config.repeat_threshold and all(
-                item.plain_text == plain_text
-                for item in group_msgs[-self.config.repeat_threshold + 1 :]
-            ):
-                group_bot_replies = self.state.get_group_bot_replies(group_id, bot_id)
-                if (
-                    len(group_bot_replies)
-                    and group_bot_replies[-1]["reply"] != plain_text
-                ):
-                    return [plain_text], keywords
-                return None
 
         if db.db_operations is None:
             return None

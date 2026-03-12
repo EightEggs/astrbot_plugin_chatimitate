@@ -29,11 +29,6 @@
         "type": "int",
         "default": 2
     },
-    "repeat_threshold": {
-        "description": "群内连续出现多少次相同消息时触发复读。设置为 3 表示当连续 3 个人说同样的话时，机器人也会跟着复读",
-        "type": "int",
-        "default": 3
-    },
     "duplicate_reply": {
         "description": "检查最近多少条回复内是否有重复内容。数值越大越不容易重复，但可能导致回复过于谨慎",
         "type": "int",
