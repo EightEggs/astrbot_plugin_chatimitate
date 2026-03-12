@@ -115,11 +115,6 @@ class ChatImitate(Star):
 
     def _build_message_chain(self, msg: str) -> MessageChain | None:
         """
-        构建消息链 - 完全结构化版本
-
-        根据存储的消息内容重建 MessageChain。
-        只发送真实的内容（纯文本或有效图片），不发送任何占位符。
-
         Args:
             msg: 消息字符串（可能是纯文本或多媒体标记）
 

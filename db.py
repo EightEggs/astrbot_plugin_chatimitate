@@ -320,7 +320,7 @@ class DatabaseOperations:
         # 获取触发关键词 ID
         async with conn.execute(
             "SELECT id FROM trigger_keywords WHERE keywords = ? AND updated_at = (SELECT updated_at FROM trigger_keywords WHERE keywords = ?)",
-            (trigger.keywords, trigger.keywords)
+            (trigger.keywords, trigger.keywords),
         ) as cursor:
             context_id_row = await cursor.fetchone()
             context_id = context_id_row["id"] if context_id_row else None

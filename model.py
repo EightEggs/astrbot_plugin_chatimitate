@@ -215,13 +215,22 @@ class ChatStateManager:
 
         self._late_save_time: int = 0
 
-    async def _sync(self, cur_time: int = int(time.time())):
-        """持久化消息到数据库"""
+    async def _sync(self, cur_time: int | None = None):
+        """
+        持久化消息到数据库
+
+        Args:
+            cur_time: 当前时间戳（可选），如果不传入则使用当前时间
+        """
         if db.db_operations is None:
             logger.warning("db_operations not initialized, skipping sync")
             return
 
+        if cur_time is None:
+            cur_time = int(time.time())
+
         async with self._message_lock:
+            # 只保存时间戳大于 _late_save_time 的新消息
             save_list = [
                 msg
                 for group_msgs in self._message_dict.values()
@@ -229,16 +238,29 @@ class ChatStateManager:
                 if msg.time > self._late_save_time
             ]
             if not save_list:
+                logger.debug("chatimitate: 没有新消息需要保存")
                 return
 
+            # 更新 _late_save_time 为最后一条消息的时间，而不是当前时间
+            # 这样可以确保每条消息只保存一次
+            self._late_save_time = max(msg.time for msg in save_list)
+
+            # 保留最近的消息在内存中
             new_dict = {
                 group_id: group_msgs[-self.config.save_reserved_size :]
                 for group_id, group_msgs in self._message_dict.items()
             }
             self._message_dict.clear()
             self._message_dict.update(new_dict)
-            self._late_save_time = cur_time
 
+        # 保存到数据库
+        if self.config.debug_message_format:
+            logger.info(
+                "chatimitate: 保存 %d 条新消息到数据库（时间戳范围：%d - %d）",
+                len(save_list),
+                min(msg.time for msg in save_list),
+                self._late_save_time,
+            )
         for msg in save_list:
             await db.db_operations.save_message(msg)
 
