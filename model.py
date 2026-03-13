@@ -1,6 +1,5 @@
 """
 AstrBot ChatImitate Plugin - Core Logic Module
-核心聊天学习逻辑模块 - 适配AstrBot框架
 """
 
 import asyncio
@@ -55,6 +54,24 @@ class ChatData:
         try:
             keywords = jieba_analyse.extract_tags(
                 self.plain_text, topK=ChatData._keywords_size, withWeight=True
+            )
+            return [
+                item[0] if isinstance(item, (list, tuple)) else str(item)
+                for item in keywords
+            ]
+        except Exception:
+            return [self.plain_text] if self.plain_text else []
+
+    async def get_keywords_list(self) -> list[str]:
+        """获取关键词列表"""
+        if not self.is_plain_text and len(self.plain_text) == 0:
+            return []
+        try:
+            keywords = await asyncio.to_thread(
+                jieba_analyse.extract_tags,
+                self.plain_text,
+                topK=ChatData._keywords_size,
+                withWeight=True
             )
             return [
                 item[0] if isinstance(item, (list, tuple)) else str(item)
@@ -326,7 +343,8 @@ class Chat:
                     group_id, [k for k in answer_keywords.split(" ") if not k.startswith("bot")]
                 )
 
-            await self.state.add_topics(group_id, self.chat_data._keywords_list)
+            keywords_list = await self.chat_data.get_keywords_list()
+            await self.state.add_topics(group_id, keywords_list)
             yield item
 
     async def _message_insert(self):
@@ -348,7 +366,8 @@ class Chat:
         )
 
         if self.chat_data.is_plain_text:
-            await self.state.add_topics(group_id, self.chat_data._keywords_list)
+            keywords_list = await self.chat_data.get_keywords_list()
+            await self.state.add_topics(group_id, keywords_list)
 
         cur_time = self.chat_data.time
 
@@ -514,6 +533,11 @@ class Chat:
             min(answer.count, 10) + answer.topical * self.config.topics_importance
             for answer in candidate_answers.values()
         ]
+
+        # 保底校验：确保权重列表非空且不全为0
+        if not weights or all(w <= 0 for w in weights):
+            return None
+
         final_answer = random.choices(list(candidate_answers.values()), weights=weights)[0]
         answer_str = random.choice(final_answer.messages).removeprefix("bot")
 

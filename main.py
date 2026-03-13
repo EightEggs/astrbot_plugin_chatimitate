@@ -1,6 +1,5 @@
 """
 AstrBot ChatImitate Plugin - Main Module
-插件主入口 - 适配AstrBot框架
 """
 
 import asyncio
@@ -19,7 +18,6 @@ from .model import Chat
 
 
 class ChatImitatePlugin(Star):
-    """聊天模仿插件 - AstrBot框架版本"""
 
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -44,14 +42,19 @@ class ChatImitatePlugin(Star):
                 await self._bg_task
             except asyncio.CancelledError:
                 pass
+            except Exception as e:
+                logger.warning("chatimitate: bg task cancel failed: %s", e)
 
         try:
             await Chat.sync()
-        except Exception:
-            logger.warning("chatimitate: final sync failed", exc_info=True)
+        except Exception as e:
+            logger.warning("chatimitate: final sync failed: %s", e, exc_info=True)
 
         if db.db_manager:
-            await db.db_manager.close()
+            try:
+                await db.db_manager.close()
+            except Exception as e:
+                logger.warning("chatimitate: db close failed: %s", e, exc_info=True)
         logger.info("chatimitate: plugin terminated")
 
     async def _periodic_maintenance(self):
@@ -100,6 +103,8 @@ class ChatImitatePlugin(Star):
 
     def _build_message_chain(self, msg: str) -> MessageChain | None:
         """构建消息链"""
+        import re
+
         if not msg:
             return None
 
@@ -112,8 +117,9 @@ class ChatImitatePlugin(Star):
             return None
 
         if msg.startswith("[图片:"):
-            image_url = msg[5:-1] if msg.endswith("]") else msg[5:]
-            if image_url:
+            match = re.match(r"\[图片:(.+?)\]$", msg)
+            if match:
+                image_url = match.group(1)
                 if image_url.startswith("http://") or image_url.startswith("https://"):
                     components.append(Image(file=image_url, url=image_url))
                 else:
@@ -127,17 +133,21 @@ class ChatImitatePlugin(Star):
         elif msg.startswith("[文件]"):
             return None
         elif msg.startswith("[at:"):
-            qq_id = msg[4:-1]
-            if qq_id == "all":
-                from astrbot.api.message_components import AtAll
-                components.append(AtAll())
-            else:
-                components.append(At(qq=qq_id))
-            return MessageChain(components)
+            match = re.match(r"\[at:(.+?)\]$", msg)
+            if match:
+                qq_id = match.group(1)
+                if qq_id == "all":
+                    from astrbot.api.message_components import AtAll
+                    components.append(AtAll())
+                else:
+                    components.append(At(qq=qq_id))
+                return MessageChain(components)
+            return None
         elif msg.startswith("[face:"):
-            face_id = msg[6:-1]
-            if face_id.isdigit():
-                components.append(Face(id=int(face_id)))
+            match = re.match(r"\[face:(\d+)\]$", msg)
+            if match:
+                face_id = int(match.group(1))
+                components.append(Face(id=face_id))
                 return MessageChain(components)
             return None
         else:

@@ -1,6 +1,5 @@
 """
 AstrBot ChatImitate Plugin - Database Module
-数据库模块 - 使用 SQLite 存储聊天记录和学习数据
 """
 
 import time
@@ -87,6 +86,7 @@ class DatabaseManager:
         """获取异步数据库连接"""
         if self._connection is None:
             self._connection = await aiosqlite.connect(self.db_path)
+            await self._connection.execute("PRAGMA journal_mode = WAL")
             await self._connection.execute("PRAGMA foreign_keys = ON")
             self._connection.row_factory = aiosqlite.Row
         return self._connection
@@ -163,7 +163,6 @@ class DatabaseManager:
             await conn.execute(index_sql)
 
         await conn.commit()
-        logger.info("chatimitate: database initialized")
 
     async def close(self):
         """关闭数据库连接"""
