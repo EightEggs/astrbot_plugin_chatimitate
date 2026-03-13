@@ -5,14 +5,23 @@ AstrBot ChatImitate Plugin - Configuration Module
 from astrbot.api import AstrBotConfig
 
 
+def _parse_bool(value) -> bool:
+    """解析布尔值，处理字符串 "false" 的情况"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() not in ("false", "0", "no", "off", "")
+    return bool(value)
+
+
 class ChatImitateConfig:
     """聊天模仿插件配置管理类"""
 
     def __init__(self, plugin_config: AstrBotConfig):
         # 调试配置
-        self.debug_message_format: bool = bool(plugin_config.get(
-            "debug_message_format", False
-        ))
+        self.debug_message_format: bool = _parse_bool(
+            plugin_config.get("debug_message_format", False)
+        )
 
         # 学习机制配置 (learning 分组)
         learning_config = plugin_config.get("learning", {})
@@ -28,31 +37,33 @@ class ChatImitateConfig:
 
         # 数据存储配置 (storage 分组)
         storage_config = plugin_config.get("storage", {})
-        self.save_time_threshold: int = int(storage_config.get(
-            "save_time_threshold", 300
-        ))
-        self.save_count_threshold: int = int(storage_config.get(
-            "save_count_threshold", 50
-        ))
+        self.save_time_threshold: int = int(storage_config.get("save_time_threshold", 300))
+        self.save_count_threshold: int = int(storage_config.get("save_count_threshold", 50))
         self.save_reserved_size: int = int(storage_config.get("save_reserved_size", 100))
-        self.cleanup_expired_days: int = int(storage_config.get(
-            "cleanup_expired_days", 15
-        ))
+        self.cleanup_expired_days: int = int(storage_config.get("cleanup_expired_days", 15))
 
         # 多媒体支持配置 (media 分组)
         media_config = plugin_config.get("media", {})
-        self.enable_image_learning: bool = bool(media_config.get(
-            "enable_image_learning", True
-        ))
-        self.image_similarity_threshold: float = float(media_config.get(
-            "image_similarity_threshold", 0.8
-        ))
+        self.enable_image_learning: bool = _parse_bool(
+            media_config.get("enable_image_learning", True)
+        )
+        self.image_similarity_threshold: float = float(
+            media_config.get("image_similarity_threshold", 0.8)
+        )
 
     def _ensure_list_int(self, value) -> list[int]:
-        """确保值是整数列表"""
+        """确保值是整数列表，带容错处理"""
         if not isinstance(value, list):
             return [7, 23, 70]
-        return [int(x) for x in value]
+
+        result = []
+        for item in value:
+            try:
+                result.append(int(item))
+            except (ValueError, TypeError):
+                continue
+
+        return result if result else [7, 23, 70]
 
     @property
     def answer_threshold_choice_list(self) -> list[int]:
@@ -69,6 +80,10 @@ class ChatImitateConfig:
         """验证配置有效性"""
         # 验证权重列表长度与阈值范围匹配
         if len(self.answer_threshold_weights) != len(self.answer_threshold_choice_list):
+            return False
+
+        # 验证权重列表非空
+        if not self.answer_threshold_weights:
             return False
 
         # 验证概率值在合理范围内

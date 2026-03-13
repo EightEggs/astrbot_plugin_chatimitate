@@ -1,7 +1,7 @@
 name: astrbot_plugin_chatimitate
 display_name: ChatImitate
 desc: 这是一个 Astrbot 插件，旨在让 bot 从群聊记录中学习和模仿人类聊天，而不是使用AI生成内容
-version: v3.0.2
+version: v3.1.0
 author: EightEggs
 repo: https://github.com/EightEggs/astrbot_plugin_chatimitate
 astrbot_version: ">=4.12.1"

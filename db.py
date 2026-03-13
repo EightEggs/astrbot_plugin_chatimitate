@@ -2,6 +2,7 @@
 AstrBot ChatImitate Plugin - Database Module
 """
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -81,6 +82,7 @@ class DatabaseManager:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.data_dir / "chatimitate.db"
         self._connection: aiosqlite.Connection | None = None
+        self._lock = asyncio.Lock()
 
     async def get_connection(self) -> aiosqlite.Connection:
         """获取异步数据库连接"""
@@ -157,6 +159,8 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_reply_contents_group_keywords ON reply_contents(group_id, keywords)",
             "CREATE INDEX IF NOT EXISTS idx_disabled_replies_context ON disabled_replies(context_id)",
             "CREATE INDEX IF NOT EXISTS idx_disabled_replies_group ON disabled_replies(group_id)",
+            # 新增：用于 find_context_by_reply 的索引
+            "CREATE INDEX IF NOT EXISTS idx_reply_contents_messages ON reply_contents(messages)",
         ]
 
         for index_sql in indexes:
@@ -196,6 +200,39 @@ class DatabaseOperations:
         )
         await conn.commit()
         return cursor.lastrowid or 0
+
+    async def save_messages_batch(self, messages: list[ChatMessage]) -> int:
+        """批量保存聊天记录"""
+        if not messages:
+            return 0
+
+        conn = await self.db.get_connection()
+        data = [
+            (
+                msg.group_id,
+                msg.user_id,
+                msg.raw_message,
+                1 if msg.is_plain_text else 0,
+                msg.plain_text,
+                msg.keywords,
+                msg.time,
+            )
+            for msg in messages
+        ]
+
+        try:
+            await conn.executemany(
+                """INSERT INTO chat_messages
+                (group_id, user_id, raw_message, is_plain_text, plain_text, keywords, time)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                data,
+            )
+            await conn.commit()
+            return len(messages)
+        except Exception:
+            await conn.rollback()
+            logger.error("chatimitate: failed to save messages batch", exc_info=True)
+            return 0
 
     async def get_trigger_keyword(self, keywords: str) -> TriggerKeyword | None:
         """获取触发关键词及其关联数据"""
@@ -251,137 +288,167 @@ class DatabaseOperations:
 
     async def save_trigger_keyword(self, trigger: TriggerKeyword) -> None:
         """保存触发关键词及其关联数据（带事务保护）"""
-        conn = await self.db.get_connection()
+        async with self.db._lock:
+            conn = await self.db.get_connection()
 
-        await conn.execute("BEGIN")
-        try:
-            cursor = await conn.execute(
-                """INSERT OR REPLACE INTO trigger_keywords
-                (keywords, time, trigger_count, clear_time, updated_at)
-                VALUES (?, ?, ?, ?, strftime('%s', 'now'))
-                RETURNING id""",
-                (trigger.keywords, trigger.time, trigger.trigger_count, trigger.clear_time),
-            )
-            row = await cursor.fetchone()
-            context_id = row[0] if row else None
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                # 使用 INSERT ... ON CONFLICT UPDATE 替代 INSERT OR REPLACE
+                # 避免 REPLACE 的先删后插导致级联删除
+                cursor = await conn.execute(
+                    """INSERT INTO trigger_keywords
+                    (keywords, time, trigger_count, clear_time, updated_at)
+                    VALUES (?, ?, ?, ?, strftime('%s', 'now'))
+                    ON CONFLICT(keywords) DO UPDATE SET
+                    time = excluded.time,
+                    trigger_count = excluded.trigger_count,
+                    clear_time = excluded.clear_time,
+                    updated_at = excluded.updated_at
+                    RETURNING id""",
+                    (trigger.keywords, trigger.time, trigger.trigger_count, trigger.clear_time),
+                )
+                row = await cursor.fetchone()
+                context_id = row[0] if row else None
 
-            if not context_id:
+                if not context_id:
+                    await conn.rollback()
+                    return
+
+                existing_replies = {}
+                async with conn.execute(
+                    "SELECT id, keywords FROM reply_contents WHERE context_id = ?",
+                    (context_id,),
+                ) as cursor:
+                    async for row in cursor:
+                        existing_replies[row["keywords"]] = row["id"]
+
+                for reply in trigger.replies:
+                    if reply.keywords in existing_replies:
+                        await conn.execute(
+                            """UPDATE reply_contents SET
+                            count = ?, time = ?, messages = ?, topical = ?, updated_at = strftime('%s', 'now')
+                            WHERE id = ?""",
+                            (
+                                reply.count,
+                                reply.time,
+                                serialize_messages(reply.messages),
+                                reply.topical,
+                                existing_replies[reply.keywords],
+                            ),
+                        )
+                    else:
+                        await conn.execute(
+                            """INSERT INTO reply_contents
+                            (context_id, keywords, group_id, count, time, messages, topical)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                context_id,
+                                reply.keywords,
+                                reply.group_id,
+                                reply.count,
+                                reply.time,
+                                serialize_messages(reply.messages),
+                                reply.topical,
+                            ),
+                        )
+
+                current_keywords = {r.keywords for r in trigger.replies}
+                for kw, rid in existing_replies.items():
+                    if kw not in current_keywords:
+                        await conn.execute("DELETE FROM reply_contents WHERE id = ?", (rid,))
+
+                existing_disabled = {}
+                async with conn.execute(
+                    "SELECT id, keywords FROM disabled_replies WHERE context_id = ?",
+                    (context_id,),
+                ) as cursor:
+                    async for row in cursor:
+                        existing_disabled[row["keywords"]] = row["id"]
+
+                for disabled in trigger.disabled:
+                    if disabled.keywords in existing_disabled:
+                        await conn.execute(
+                            """UPDATE disabled_replies SET
+                            group_id = ?, reason = ?, time = ?
+                            WHERE id = ?""",
+                            (
+                                disabled.group_id,
+                                disabled.reason,
+                                disabled.time,
+                                existing_disabled[disabled.keywords],
+                            ),
+                        )
+                    else:
+                        await conn.execute(
+                            """INSERT INTO disabled_replies
+                            (context_id, keywords, group_id, reason, time)
+                            VALUES (?, ?, ?, ?, ?)""",
+                            (
+                                context_id,
+                                disabled.keywords,
+                                disabled.group_id,
+                                disabled.reason,
+                                disabled.time,
+                            ),
+                        )
+
+                current_disabled = {d.keywords for d in trigger.disabled}
+                for kw, did in existing_disabled.items():
+                    if kw not in current_disabled:
+                        await conn.execute("DELETE FROM disabled_replies WHERE id = ?", (did,))
+
+                await conn.commit()
+            except Exception:
                 await conn.rollback()
+                logger.error("chatimitate: failed to save trigger batch", exc_info=True)
                 return
-
-            existing_replies = {}
-            async with conn.execute(
-                "SELECT id, keywords FROM reply_contents WHERE context_id = ?",
-                (context_id,),
-            ) as cursor:
-                async for row in cursor:
-                    existing_replies[row["keywords"]] = row["id"]
-
-            for reply in trigger.replies:
-                if reply.keywords in existing_replies:
-                    await conn.execute(
-                        """UPDATE reply_contents SET
-                        count = ?, time = ?, messages = ?, topical = ?, updated_at = strftime('%s', 'now')
-                        WHERE id = ?""",
-                        (
-                            reply.count,
-                            reply.time,
-                            serialize_messages(reply.messages),
-                            reply.topical,
-                            existing_replies[reply.keywords],
-                        ),
-                    )
-                else:
-                    await conn.execute(
-                        """INSERT INTO reply_contents
-                        (context_id, keywords, group_id, count, time, messages, topical)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            context_id,
-                            reply.keywords,
-                            reply.group_id,
-                            reply.count,
-                            reply.time,
-                            serialize_messages(reply.messages),
-                            reply.topical,
-                        ),
-                    )
-
-            current_keywords = {r.keywords for r in trigger.replies}
-            for kw, rid in existing_replies.items():
-                if kw not in current_keywords:
-                    await conn.execute("DELETE FROM reply_contents WHERE id = ?", (rid,))
-
-            existing_disabled = {}
-            async with conn.execute(
-                "SELECT id, keywords FROM disabled_replies WHERE context_id = ?",
-                (context_id,),
-            ) as cursor:
-                async for row in cursor:
-                    existing_disabled[row["keywords"]] = row["id"]
-
-            for disabled in trigger.disabled:
-                if disabled.keywords in existing_disabled:
-                    await conn.execute(
-                        """UPDATE disabled_replies SET
-                        group_id = ?, reason = ?, time = ?
-                        WHERE id = ?""",
-                        (
-                            disabled.group_id,
-                            disabled.reason,
-                            disabled.time,
-                            existing_disabled[disabled.keywords],
-                        ),
-                    )
-                else:
-                    await conn.execute(
-                        """INSERT INTO disabled_replies
-                        (context_id, keywords, group_id, reason, time)
-                        VALUES (?, ?, ?, ?, ?)""",
-                        (
-                            context_id,
-                            disabled.keywords,
-                            disabled.group_id,
-                            disabled.reason,
-                            disabled.time,
-                        ),
-                    )
-
-            current_disabled = {d.keywords for d in trigger.disabled}
-            for kw, did in existing_disabled.items():
-                if kw not in current_disabled:
-                    await conn.execute("DELETE FROM disabled_replies WHERE id = ?", (did,))
-
-            await conn.commit()
-        except Exception:
-            await conn.rollback()
-            raise
 
     async def disable_reply(
         self, context_id: int, keywords: str, group_id: str, reason: str = ""
-    ) -> int:
-        """禁用某个回复"""
+    ) -> bool:
+        """禁用某个回复，带去重检查"""
         conn = await self.db.get_connection()
-        cursor = await conn.execute(
-            """INSERT INTO disabled_replies
-            (context_id, keywords, group_id, reason, time)
-            VALUES (?, ?, ?, ?, strftime('%s', 'now'))""",
-            (context_id, keywords, group_id, reason),
-        )
-        await conn.commit()
-        return cursor.lastrowid or 0
+
+        async with self.db._lock:
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                # 检查是否已存在相同的禁用记录
+                async with conn.execute(
+                    """SELECT 1 FROM disabled_replies
+                    WHERE context_id = ? AND keywords = ? AND group_id = ?""",
+                    (context_id, keywords, group_id),
+                ) as cursor:
+                    if await cursor.fetchone():
+                        # 已存在，无需重复插入
+                        await conn.rollback()
+                        return True
+
+                await conn.execute(
+                    """INSERT INTO disabled_replies
+                    (context_id, keywords, group_id, reason, time)
+                    VALUES (?, ?, ?, ?, strftime('%s', 'now'))""",
+                    (context_id, keywords, group_id, reason),
+                )
+                await conn.commit()
+                return True
+            except Exception:
+                await conn.rollback()
+                logger.error("chatimitate: failed to disable reply", exc_info=True)
+                return False
 
     async def find_context_by_reply(self, reply_message: str) -> int | None:
-        """根据回复内容查找 context_id"""
+        """根据回复内容查找 context_id - 使用精确匹配"""
         conn = await self.db.get_connection()
 
+        # 首先尝试精确匹配
         async with conn.execute(
-            "SELECT context_id, messages FROM reply_contents"
+            "SELECT context_id, messages FROM reply_contents WHERE messages LIKE ?",
+            (f"%{reply_message}%",)
         ) as cursor:
             async for row in cursor:
                 messages = deserialize_messages(row["messages"])
                 for msg in messages:
-                    if msg and reply_message in msg:
+                    if msg == reply_message:
                         return row["context_id"]
 
         # 备选：通过关键词查找
@@ -396,50 +463,52 @@ class DatabaseOperations:
 
     async def clear_expired_triggers(self, expiration: int, min_trigger_count: int = 3) -> int:
         """清理过期的触发关键词"""
-        conn = await self.db.get_connection()
+        async with self.db._lock:
+            conn = await self.db.get_connection()
 
-        await conn.execute("BEGIN")
-        try:
-            # 删除长期未使用的触发关键词
-            await conn.execute(
-                """DELETE FROM trigger_keywords
-                WHERE time < ?
-                  AND trigger_count < ?
-                  AND id NOT IN (
-                      SELECT DISTINCT context_id FROM reply_contents
-                      WHERE count > 1 OR time > ?
-                  )""",
-                (expiration, min_trigger_count, expiration),
-            )
-
-            # 清理高频触发关键词的低频回复
-            async with conn.execute(
-                "SELECT id FROM trigger_keywords WHERE trigger_count > 100 OR clear_time < ?",
-                (expiration,),
-            ) as cursor:
-                rows = await cursor.fetchall()
-
-            trigger_ids = [row["id"] for row in rows]
-            if trigger_ids:
-                placeholders = ",".join(["?"] * len(trigger_ids))
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                # 删除长期未使用的触发关键词
                 await conn.execute(
-                    f"""DELETE FROM reply_contents
-                    WHERE context_id IN ({placeholders})
-                      AND NOT (count > 1 OR time > ?)""",
-                    (*trigger_ids, expiration),
-                )
-                await conn.execute(
-                    f"""UPDATE trigger_keywords
-                    SET clear_time = ?
-                    WHERE id IN ({placeholders})""",
-                    (int(time.time()), *trigger_ids),
+                    """DELETE FROM trigger_keywords
+                    WHERE time < ?
+                      AND trigger_count < ?
+                      AND id NOT IN (
+                          SELECT DISTINCT context_id FROM reply_contents
+                          WHERE count > 1 OR time > ?
+                      )""",
+                    (expiration, min_trigger_count, expiration),
                 )
 
-            await conn.commit()
-            return len(trigger_ids)
-        except Exception:
-            await conn.rollback()
-            raise
+                # 清理高频触发关键词的低频回复
+                async with conn.execute(
+                    "SELECT id FROM trigger_keywords WHERE trigger_count > 100 OR clear_time < ?",
+                    (expiration,),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+
+                trigger_ids = [row["id"] for row in rows]
+                if trigger_ids:
+                    placeholders = ",".join(["?"] * len(trigger_ids))
+                    await conn.execute(
+                        f"""DELETE FROM reply_contents
+                        WHERE context_id IN ({placeholders})
+                          AND NOT (count > 1 OR time > ?)""",
+                        (*trigger_ids, expiration),
+                    )
+                    await conn.execute(
+                        f"""UPDATE trigger_keywords
+                        SET clear_time = ?
+                        WHERE id IN ({placeholders})""",
+                        (int(time.time()), *trigger_ids),
+                    )
+
+                await conn.commit()
+                return len(trigger_ids)
+            except Exception:
+                await conn.rollback()
+                logger.error("chatimitate: failed to clear expired triggers", exc_info=True)
+                return 0
 
 
 # 全局实例

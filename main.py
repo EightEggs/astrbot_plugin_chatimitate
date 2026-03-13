@@ -9,11 +9,12 @@ import time
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import At, AtAll, Face, Image, Plain, Reply
+from astrbot.api.message_components import At, AtAll, Face, Image, Plain
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.message.message_event_result import MessageChain
 
 from . import db
+from .ban import ReplyBanner
 from .config import ChatImitateConfig
 from .model import Chat
 
@@ -29,6 +30,10 @@ class ChatImitatePlugin(Star):
 
     async def initialize(self):
         """异步初始化"""
+        if not self.config.validate():
+            logger.error("chatimitate: 配置验证失败，请检查配置")
+            return
+
         data_dir = StarTools.get_data_dir(self.name)
         await db.init_db(data_dir)
         self._bg_task = asyncio.create_task(self._periodic_maintenance())
@@ -87,7 +92,9 @@ class ChatImitatePlugin(Star):
         if event.get_sender_id() == event.get_self_id():
             return
 
-        if await self._handle_admin_disable(event):
+        # 处理管理员禁用命令
+        disable_result = await ReplyBanner.handle_admin_disable(event)
+        if disable_result.handled:
             return
 
         chat = Chat(event, self.config)
@@ -153,79 +160,3 @@ class ChatImitatePlugin(Star):
                 components.append(Plain(msg))
                 return MessageChain(components)
             return None
-
-    async def _handle_admin_disable(self, event: AstrMessageEvent) -> bool:
-        """处理管理员禁用回复"""
-        message_chain = event.get_messages()
-        if not message_chain:
-            return False
-
-        reply_component = None
-        command_text = ""
-
-        for comp in message_chain:
-            if isinstance(comp, Reply):
-                reply_component = comp
-            elif isinstance(comp, Plain):
-                command_text = comp.text.strip()
-
-        if not reply_component:
-            return False
-
-        if not self._is_disable_command(command_text):
-            return False
-
-        if not event.is_admin():
-            await event.send(MessageChain([Plain("权限不足，只有管理员可以禁用回复")]))
-            return False
-
-        try:
-            await self._disable_reply(reply_component, event)
-            await event.send(MessageChain([Plain("已禁用该回复")]))
-            return True
-        except Exception as e:
-            logger.error("chatimitate: failed to disable reply: %s", e, exc_info=True)
-            await event.send(MessageChain([Plain("禁用回复失败")]))
-            return True
-
-    def _is_disable_command(self, text: str) -> bool:
-        """检查是否是禁用命令"""
-        disable_commands = [
-            "禁止说这", "禁止说这个", "禁用这个", "禁用这",
-            "不要说这个", "不许说这个", "禁止", "禁用",
-            "屏蔽", "停用", "disable", "ban",
-        ]
-        text_lower = text.lower()
-        return any(cmd in text_lower for cmd in disable_commands)
-
-    async def _disable_reply(self, reply: Reply, event: AstrMessageEvent):
-        """禁用引用的回复"""
-        if not db.db_operations:
-            raise Exception("数据库未初始化")
-
-        group_id = event.get_group_id()
-        reply_content = getattr(reply, "message_str", "")
-
-        if not reply_content:
-            raise ValueError("无法获取被引用回复的内容")
-
-        context_id = await self._find_context_by_reply(reply_content)
-
-        if not context_id:
-            logger.warning("chatimitate: 未找到包含回复 '%s' 的上下文", reply_content[:50])
-            return
-
-        await db.db_operations.disable_reply(
-            context_id=context_id,
-            keywords=reply_content,
-            group_id=group_id,
-            reason="管理员禁用",
-        )
-
-        logger.info("chatimitate: 在群组 %s 中禁用回复 '%s'", group_id, reply_content[:50])
-
-    async def _find_context_by_reply(self, reply_content: str) -> int | None:
-        """根据回复内容查找 context_id"""
-        if not db.db_operations:
-            return None
-        return await db.db_operations.find_context_by_reply(reply_content)

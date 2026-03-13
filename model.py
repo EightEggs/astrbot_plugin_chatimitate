@@ -9,7 +9,6 @@ import time
 from collections import defaultdict, deque
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from functools import cached_property
 
 import jieba_next.analyse as jieba_analyse
 
@@ -39,12 +38,13 @@ class ChatData:
     _event: AstrMessageEvent | None = None
     _keywords_size: int = 2
     _cached_keywords: list[str] | None = None
+    _cached_keywords_str: str | None = None
 
-    @cached_property
+    @property
     def is_plain_text(self) -> bool:
         return self.message_type == "text" and len(self.plain_text) != 0
 
-    @cached_property
+    @property
     def is_image(self) -> bool:
         return self.message_type in ("image", "mixed") and self.image_url is not None
 
@@ -58,6 +58,8 @@ class ChatData:
             return self._cached_keywords
 
         try:
+            # 检查事件循环状态
+            asyncio.get_running_loop()
             keywords = await asyncio.to_thread(
                 jieba_analyse.extract_tags,
                 self.plain_text,
@@ -68,10 +70,24 @@ class ChatData:
                 item[0] if isinstance(item, (list, tuple)) else str(item)
                 for item in keywords
             ]
+        except RuntimeError:
+            # 事件循环已关闭，使用简单分词
+            logger.warning("chatimitate: event loop closed, using simple tokenize")
+            self._cached_keywords = self._simple_tokenize()
         except Exception:
+            logger.warning("chatimitate: failed to extract keywords, using all text", exc_info=True)
             self._cached_keywords = [self.plain_text] if self.plain_text else []
 
         return self._cached_keywords
+
+    def _simple_tokenize(self) -> list[str]:
+        """简单分词（事件循环不可用时回退）"""
+        if not self.plain_text:
+            return []
+        # 按空格和标点简单分割
+        import re
+        tokens = re.split(r"[\s,，.。!！?？;；]+", self.plain_text)
+        return [t for t in tokens if len(t) > 1][:ChatData._keywords_size]
 
     async def get_keywords_len(self) -> int:
         """获取关键词列表长度"""
@@ -79,38 +95,21 @@ class ChatData:
 
     async def get_keywords(self) -> str:
         """获取关键词字符串"""
+        if self._cached_keywords_str is not None:
+            return self._cached_keywords_str
+
         if self.is_image and not self.is_plain_text:
-            return f"[图片]{self.image_hash or ''}"
+            self._cached_keywords_str = f"[图片:{self.image_hash or ''}]"
+            return self._cached_keywords_str
         if not self.is_plain_text and len(self.plain_text) == 0:
-            return f"[{self.message_type}]"
+            self._cached_keywords_str = f"[{self.message_type}]"
+            return self._cached_keywords_str
+
         keywords = await self.get_keywords_list()
-        return " ".join(keywords) if keywords else self.plain_text
+        self._cached_keywords_str = " ".join(keywords) if keywords else self.plain_text
+        return self._cached_keywords_str
 
-    @cached_property
-    def keywords(self) -> str:
-        """同步访问关键词（仅在异步上下文中使用）"""
-        try:
-            loop = asyncio.get_running_loop()
-            future = asyncio.run_coroutine_threadsafe(self.get_keywords(), loop)
-            return future.result(timeout=5)
-        except Exception:
-            if self.is_image and not self.is_plain_text:
-                return f"[图片]{self.image_hash or ''}"
-            if not self.is_plain_text and len(self.plain_text) == 0:
-                return f"[{self.message_type}]"
-            return self.plain_text
-
-    @cached_property
-    def keywords_len(self) -> int:
-        """同步访问关键词长度（仅在异步上下文中使用）"""
-        try:
-            loop = asyncio.get_running_loop()
-            future = asyncio.run_coroutine_threadsafe(self.get_keywords_len(), loop)
-            return future.result(timeout=5)
-        except Exception:
-            return 0
-
-    @cached_property
+    @property
     def to_me(self) -> bool:
         if self._event:
             message_chain = self._event.get_messages()
@@ -147,7 +146,7 @@ class ChatStateManager:
         self._late_save_time: int = 0
 
     async def _sync(self, cur_time: int | None = None):
-        """持久化消息到数据库"""
+        """持久化消息到数据库（批量提交）"""
         if db.db_operations is None:
             logger.warning("chatimitate: db_operations not initialized")
             return
@@ -160,12 +159,12 @@ class ChatStateManager:
                 msg
                 for group_msgs in self._message_dict.values()
                 for msg in group_msgs
-                if msg.time >= self._late_save_time
+                if msg.time > self._late_save_time
             ]
             if not save_list:
                 return
 
-            self._late_save_time = max(msg.time for msg in save_list) + 1
+            self._late_save_time = max(msg.time for msg in save_list)
 
             new_dict = {
                 group_id: group_msgs[-self.config.save_reserved_size:]
@@ -174,8 +173,17 @@ class ChatStateManager:
             self._message_dict.clear()
             self._message_dict.update(new_dict)
 
-        for msg in save_list:
-            await db.db_operations.save_message(msg)
+        # 使用批量保存替代逐条保存
+        try:
+            await db.db_operations.save_messages_batch(save_list)
+        except Exception:
+            logger.warning("chatimitate: batch save failed, trying individual saves", exc_info=True)
+            # 批量失败时回退到逐条保存
+            for msg in save_list:
+                try:
+                    await db.db_operations.save_message(msg)
+                except Exception:
+                    logger.warning("chatimitate: individual save failed", exc_info=True)
 
     def get_group_bot_replies(self, group_id: str, bot_id: str) -> list[dict]:
         return self._reply_dict[group_id][bot_id]
@@ -341,10 +349,13 @@ class Chat:
         group_id = self.chat_data.group_id
         bot_id = self.chat_data.bot_id
 
+        # 获取关键词字符串（异步）
+        keywords_str = await self.chat_data.get_keywords()
+
         await self.state.add_reply(
             group_id, bot_id,
             {"time": int(time.time()), "pre_plain_text": self.chat_data.plain_text,
-             "pre_keywords": self.chat_data.keywords, "reply": self.REPLY_FLAG,
+             "pre_keywords": keywords_str, "reply": self.REPLY_FLAG,
              "reply_keywords": self.REPLY_FLAG}
         )
 
@@ -352,7 +363,7 @@ class Chat:
             await self.state.add_reply(
                 group_id, bot_id,
                 {"time": int(time.time()), "pre_plain_text": self.chat_data.plain_text,
-                 "pre_keywords": self.chat_data.keywords, "reply": item,
+                 "pre_keywords": keywords_str, "reply": item,
                  "reply_keywords": answer_keywords}
             )
 
@@ -370,6 +381,9 @@ class Chat:
         group_id = self.chat_data.group_id
         raw_message_desc = self._build_raw_message_description()
 
+        # 获取关键词字符串（异步）
+        keywords_str = await self.chat_data.get_keywords()
+
         await self.state.add_message(
             group_id,
             ChatMessage(
@@ -378,7 +392,7 @@ class Chat:
                 raw_message=raw_message_desc,
                 is_plain_text=self.chat_data.is_plain_text,
                 plain_text=self.chat_data.plain_text,
-                keywords=self.chat_data.keywords,
+                keywords=keywords_str,
                 time=self.chat_data.time,
             ),
         )
@@ -413,7 +427,8 @@ class Chat:
         if self.chat_data.is_reply:
             return
 
-        keywords = self.chat_data.keywords
+        # 异步获取关键词
+        keywords = await self.chat_data.get_keywords()
         group_id = self.chat_data.group_id
         pre_keywords = pre_msg.keywords
         cur_time = self.chat_data.time
@@ -461,7 +476,7 @@ class Chat:
     async def _context_find(self) -> tuple[list[str], str] | None:
         """查找上下文并生成回复"""
         group_id = self.chat_data.group_id
-        keywords = self.chat_data.keywords
+        keywords = await self.chat_data.get_keywords()
         bot_id = self.chat_data.bot_id
 
         if db.db_operations is None:
@@ -475,7 +490,10 @@ class Chat:
             self.config.answer_threshold_choice_list,
             weights=self.config.answer_threshold_weights,
         )[0]
-        if self.chat_data.keywords_len == ChatData._keywords_size:
+
+        # 异步获取关键词长度
+        keywords_len = await self.chat_data.get_keywords_len()
+        if keywords_len == ChatData._keywords_size:
             answer_count_threshold -= 1
 
         cross_group_threshold = 1 if self.chat_data.to_me else self.config.cross_group_threshold
@@ -516,8 +534,14 @@ class Chat:
             if answer_key in ban_keywords or answer_key in recent_replies or answer_key == keywords:
                 continue
 
+            # 检查 messages 是否为空
+            if not answer.messages:
+                continue
+
             sample_msg = answer.messages[0]
-            if self.chat_data.is_image and not sample_msg.startswith("[图片]"):
+
+            # 修复图片识别：检查是否以 "[图片:" 开头
+            if self.chat_data.is_image and not sample_msg.startswith("[图片:"):
                 continue
             if sample_msg.startswith("bot") and (not self.chat_data.to_me or len(sample_msg) <= 6):
                 continue
@@ -601,18 +625,50 @@ class Chat:
 
 _global_state_manager: ChatStateManager | None = None
 _global_config: ChatImitateConfig | None = None
+_sync_task: asyncio.Task | None = None
+
+
+async def _sync_with_error_handling(state_manager: ChatStateManager):
+    """带异常处理的同步任务"""
+    try:
+        await state_manager._sync()
+    except Exception:
+        logger.warning("chatimitate: background sync failed", exc_info=True)
+
+
+async def _sync_with_timeout(state_manager: ChatStateManager, timeout: float = 5.0):
+    """带超时的同步任务"""
+    try:
+        await asyncio.wait_for(state_manager._sync(), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning("chatimitate: sync timeout during config change")
+    except Exception:
+        logger.warning("chatimitate: sync failed during config change", exc_info=True)
 
 
 def get_global_state_manager(config: ChatImitateConfig) -> ChatStateManager:
     """获取全局状态管理器（单例）"""
-    global _global_state_manager, _global_config
+    global _global_state_manager, _global_config, _sync_task
 
     if _global_state_manager is None:
         _global_state_manager = ChatStateManager(config)
         _global_config = config
     elif _global_config != config:
+        # 配置变更时，先同步旧数据，再创建新实例
         if _global_state_manager is not None:
-            asyncio.create_task(_global_state_manager._sync())
+            # 取消之前的同步任务
+            if _sync_task is not None and not _sync_task.done():
+                _sync_task.cancel()
+            # 同步旧数据（带超时保护）- 创建新任务
+            try:
+                loop = asyncio.get_event_loop()
+                _sync_task = loop.create_task(
+                    _sync_with_timeout(_global_state_manager, timeout=5.0)
+                )
+            except RuntimeError:
+                logger.warning("chatimitate: no event loop available for sync on config change")
+            except Exception:
+                logger.warning("chatimitate: failed to schedule sync on config change", exc_info=True)
         _global_state_manager = ChatStateManager(config)
         _global_config = config
 
