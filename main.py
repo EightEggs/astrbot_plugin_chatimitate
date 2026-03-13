@@ -4,11 +4,12 @@ AstrBot ChatImitate Plugin - Main Module
 
 import asyncio
 import random
+import re
 import time
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import At, Face, Image, Plain, Reply
+from astrbot.api.message_components import At, AtAll, Face, Image, Plain, Reply
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.message.message_event_result import MessageChain
 
@@ -103,8 +104,6 @@ class ChatImitatePlugin(Star):
 
     def _build_message_chain(self, msg: str) -> MessageChain | None:
         """构建消息链"""
-        import re
-
         if not msg:
             return None
 
@@ -137,7 +136,6 @@ class ChatImitatePlugin(Star):
             if match:
                 qq_id = match.group(1)
                 if qq_id == "all":
-                    from astrbot.api.message_components import AtAll
                     components.append(AtAll())
                 else:
                     components.append(At(qq=qq_id))

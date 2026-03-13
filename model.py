@@ -38,6 +38,7 @@ class ChatData:
     has_media_content: bool = False
     _event: AstrMessageEvent | None = None
     _keywords_size: int = 2
+    _cached_keywords: list[str] | None = None
 
     @cached_property
     def is_plain_text(self) -> bool:
@@ -47,25 +48,15 @@ class ChatData:
     def is_image(self) -> bool:
         return self.message_type in ("image", "mixed") and self.image_url is not None
 
-    @cached_property
-    def _keywords_list(self) -> list[str]:
-        if not self.is_plain_text and len(self.plain_text) == 0:
-            return []
-        try:
-            keywords = jieba_analyse.extract_tags(
-                self.plain_text, topK=ChatData._keywords_size, withWeight=True
-            )
-            return [
-                item[0] if isinstance(item, (list, tuple)) else str(item)
-                for item in keywords
-            ]
-        except Exception:
-            return [self.plain_text] if self.plain_text else []
-
     async def get_keywords_list(self) -> list[str]:
-        """获取关键词列表"""
+        """获取关键词列表（带缓存，避免阻塞事件循环）"""
+        if self._cached_keywords is not None:
+            return self._cached_keywords
+
         if not self.is_plain_text and len(self.plain_text) == 0:
-            return []
+            self._cached_keywords = []
+            return self._cached_keywords
+
         try:
             keywords = await asyncio.to_thread(
                 jieba_analyse.extract_tags,
@@ -73,24 +64,51 @@ class ChatData:
                 topK=ChatData._keywords_size,
                 withWeight=True
             )
-            return [
+            self._cached_keywords = [
                 item[0] if isinstance(item, (list, tuple)) else str(item)
                 for item in keywords
             ]
         except Exception:
-            return [self.plain_text] if self.plain_text else []
+            self._cached_keywords = [self.plain_text] if self.plain_text else []
 
-    @cached_property
-    def keywords_len(self) -> int:
-        return len(self._keywords_list)
+        return self._cached_keywords
 
-    @cached_property
-    def keywords(self) -> str:
+    async def get_keywords_len(self) -> int:
+        """获取关键词列表长度"""
+        return len(await self.get_keywords_list())
+
+    async def get_keywords(self) -> str:
+        """获取关键词字符串"""
         if self.is_image and not self.is_plain_text:
             return f"[图片]{self.image_hash or ''}"
         if not self.is_plain_text and len(self.plain_text) == 0:
             return f"[{self.message_type}]"
-        return " ".join(self._keywords_list) if self.keywords_len > 0 else self.plain_text
+        keywords = await self.get_keywords_list()
+        return " ".join(keywords) if keywords else self.plain_text
+
+    @cached_property
+    def keywords(self) -> str:
+        """同步访问关键词（仅在异步上下文中使用）"""
+        try:
+            loop = asyncio.get_running_loop()
+            future = asyncio.run_coroutine_threadsafe(self.get_keywords(), loop)
+            return future.result(timeout=5)
+        except Exception:
+            if self.is_image and not self.is_plain_text:
+                return f"[图片]{self.image_hash or ''}"
+            if not self.is_plain_text and len(self.plain_text) == 0:
+                return f"[{self.message_type}]"
+            return self.plain_text
+
+    @cached_property
+    def keywords_len(self) -> int:
+        """同步访问关键词长度（仅在异步上下文中使用）"""
+        try:
+            loop = asyncio.get_running_loop()
+            future = asyncio.run_coroutine_threadsafe(self.get_keywords_len(), loop)
+            return future.result(timeout=5)
+        except Exception:
+            return 0
 
     @cached_property
     def to_me(self) -> bool:
@@ -589,7 +607,12 @@ def get_global_state_manager(config: ChatImitateConfig) -> ChatStateManager:
     """获取全局状态管理器（单例）"""
     global _global_state_manager, _global_config
 
-    if _global_state_manager is None or _global_config != config:
+    if _global_state_manager is None:
+        _global_state_manager = ChatStateManager(config)
+        _global_config = config
+    elif _global_config != config:
+        if _global_state_manager is not None:
+            asyncio.create_task(_global_state_manager._sync())
         _global_state_manager = ChatStateManager(config)
         _global_config = config
 

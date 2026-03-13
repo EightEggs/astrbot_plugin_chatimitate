@@ -61,12 +61,9 @@ class ChatImitateConfig:
         例如: answer_threshold=3, weights=[7,23,70] (3个权重)
         返回: [1, 2, 3] (从 3-3+1=1 到 3)
         """
-        return list(
-            range(
-                self.answer_threshold - len(self.answer_threshold_weights) + 1,
-                self.answer_threshold + 1,
-            )
-        )
+        start = self.answer_threshold - len(self.answer_threshold_weights) + 1
+        start = max(1, start)
+        return list(range(start, self.answer_threshold + 1))
 
     def validate(self) -> bool:
         """验证配置有效性"""
