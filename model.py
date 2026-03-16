@@ -48,6 +48,23 @@ class ChatData:
     def is_image(self) -> bool:
         return self.message_type in ("image", "mixed") and self.image_url is not None
 
+    def _calculate_keywords_size(self) -> int:
+        """根据消息长度计算关键词数量"""
+        text_len = len(self.plain_text)
+
+        if text_len <= 10:
+            return 2
+        elif text_len <= 30:
+            return 3
+        elif text_len <= 60:
+            return 4
+        elif text_len <= 100:
+            return 5
+        elif text_len <= 200:
+            return 6
+        else:
+            return min(8, max(2, text_len // 40))
+
     async def get_keywords_list(self) -> list[str]:
         """获取关键词列表（带缓存，避免阻塞事件循环）"""
         if self._cached_keywords is not None:
@@ -57,13 +74,15 @@ class ChatData:
             self._cached_keywords = []
             return self._cached_keywords
 
+        keywords_size = self._calculate_keywords_size()
+
         try:
             # 检查事件循环状态
             asyncio.get_running_loop()
             keywords = await asyncio.to_thread(
                 jieba_analyse.extract_tags,
                 self.plain_text,
-                topK=ChatData._keywords_size,
+                topK=keywords_size,
                 withWeight=True
             )
             self._cached_keywords = [
@@ -73,21 +92,21 @@ class ChatData:
         except RuntimeError:
             # 事件循环已关闭，使用简单分词
             logger.warning("chatimitate: event loop closed, using simple tokenize")
-            self._cached_keywords = self._simple_tokenize()
+            self._cached_keywords = self._simple_tokenize(keywords_size)
         except Exception:
             logger.warning("chatimitate: failed to extract keywords, using all text", exc_info=True)
             self._cached_keywords = [self.plain_text] if self.plain_text else []
 
         return self._cached_keywords
 
-    def _simple_tokenize(self) -> list[str]:
+    def _simple_tokenize(self, max_size: int = 2) -> list[str]:
         """简单分词（事件循环不可用时回退）"""
         if not self.plain_text:
             return []
         # 按空格和标点简单分割
         import re
         tokens = re.split(r"[\s,，.。!！?？;；]+", self.plain_text)
-        return [t for t in tokens if len(t) > 1][:ChatData._keywords_size]
+        return [t for t in tokens if len(t) > 1][:max_size]
 
     async def get_keywords_len(self) -> int:
         """获取关键词列表长度"""
@@ -242,6 +261,7 @@ class Chat:
     ) -> tuple[str, str, dict | None, bool, bool]:
         """提取消息内容"""
         plain_text_parts = []
+        at_parts = []
         message_chain = event.get_messages()
 
         has_image = has_record = has_video = has_file = False
@@ -257,6 +277,14 @@ class Chat:
                 text = comp.text.strip()
                 if text:
                     plain_text_parts.append(text)
+            elif isinstance(comp, At):
+                # 将 At 消息转换为 [at:qq] 格式存储
+                qq_id = str(comp.qq) if comp.qq else ""
+                if qq_id:
+                    if qq_id == "all":
+                        at_parts.append("[at:all]")
+                    else:
+                        at_parts.append(f"[at:{qq_id}]")
             elif isinstance(comp, Reply):
                 is_reply = True
             elif isinstance(comp, Image):
@@ -271,7 +299,8 @@ class Chat:
             elif isinstance(comp, File):
                 has_file = True
 
-        plain_text = " ".join(plain_text_parts)
+        # 合并文本和 At 部分
+        plain_text = " ".join(plain_text_parts + at_parts)
         if not plain_text:
             plain_text = event.get_message_str() or ""
 
@@ -432,6 +461,10 @@ class Chat:
         group_id = self.chat_data.group_id
         pre_keywords = pre_msg.keywords
         cur_time = self.chat_data.time
+
+        # 跳过纯媒体消息作为触发关键词（避免 [video], [record], [file] 等累积高 trigger_count）
+        if pre_keywords.startswith("[") and not pre_keywords.startswith("[图片:"):
+            return
 
         reply_content = plain_text
         if self.chat_data.is_image and self.chat_data.image_hash:
