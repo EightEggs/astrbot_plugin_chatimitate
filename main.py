@@ -109,54 +109,59 @@ class ChatImitatePlugin(Star):
         except Exception as e:
             logger.warning("chatimitate: learn/answer failed: %s", e, exc_info=True)
 
+    # 预编译正则表达式，避免每次重复编译
+    _MSG_PATTERN = re.compile(
+        r"(\[图片:(.+?)\]|\[at:(.+?)\]|\[face:(\d+)\]|\[语音\]|\[视频\]|\[文件\])"
+    )
+
     def _build_message_chain(self, msg: str) -> MessageChain | None:
         """构建消息链"""
         if not msg:
             return None
 
         components = []
+        last_end = 0
 
-        if not msg.startswith("["):
-            if msg.strip():
-                components.append(Plain(msg))
-                return MessageChain(components)
-            return None
+        for match in self._MSG_PATTERN.finditer(msg):
+            start, end = match.span()
 
-        if msg.startswith("[图片:"):
-            match = re.match(r"\[图片:(.+?)\]$", msg)
-            if match:
-                image_url = match.group(1)
-                if image_url.startswith("http://") or image_url.startswith("https://"):
-                    components.append(Image(file=image_url, url=image_url))
-                else:
-                    components.append(Image(file=image_url))
-                return MessageChain(components)
-            return None
-        elif msg.startswith("[语音]"):
-            return None
-        elif msg.startswith("[视频]"):
-            return None
-        elif msg.startswith("[文件]"):
-            return None
-        elif msg.startswith("[at:"):
-            match = re.match(r"\[at:(.+?)\]$", msg)
-            if match:
-                qq_id = match.group(1)
-                if qq_id == "all":
-                    components.append(AtAll())
-                else:
-                    components.append(At(qq=qq_id))
-                return MessageChain(components)
-            return None
-        elif msg.startswith("[face:"):
-            match = re.match(r"\[face:(\d+)\]$", msg)
-            if match:
-                face_id = int(match.group(1))
-                components.append(Face(id=face_id))
-                return MessageChain(components)
-            return None
-        else:
-            if msg.strip():
-                components.append(Plain(msg))
-                return MessageChain(components)
-            return None
+            # 添加标记前的纯文本
+            if start > last_end:
+                text = msg[last_end:start]
+                if text.strip():
+                    components.append(Plain(text))
+
+            # 解析特殊标记
+            component = self._parse_special_tag(match)
+            if component:
+                components.append(component)
+
+            last_end = end
+
+        # 添加剩余文本
+        if last_end < len(msg):
+            remaining = msg[last_end:]
+            if remaining.strip():
+                components.append(Plain(remaining))
+
+        return MessageChain(components) if components else None
+
+    def _parse_special_tag(self, match: re.Match) -> object | None:
+        """解析特殊标记"""
+        full_match = match.group(0)
+
+        if full_match.startswith("[图片:"):
+            image_url = match.group(2)
+            if image_url.startswith(("http://", "https://")):
+                return Image(file=image_url, url=image_url)
+            return Image(file=image_url)
+
+        if full_match.startswith("[at:"):
+            qq_id = match.group(3)
+            return AtAll() if qq_id == "all" else At(qq=qq_id)
+
+        if full_match.startswith("[face:"):
+            return Face(id=int(match.group(4)))
+
+        # [语音], [视频], [文件] 返回 None（跳过）
+        return None
