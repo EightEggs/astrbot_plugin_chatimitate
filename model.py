@@ -467,9 +467,8 @@ class Chat:
             return
 
         reply_content = plain_text
-        if self.chat_data.is_image and self.chat_data.image_hash:
-            reply_content = f"[图片:{self.chat_data.image_hash}]"
-        elif self.chat_data.is_image and self.chat_data.image_url:
+        if self.chat_data.is_image and self.chat_data.image_url:
+            # 存储图片 URL 而不是 hash，因为 URL 才能用于发送
             reply_content = f"[图片:{self.chat_data.image_url}]"
 
         context = await db.db_operations.get_trigger_keyword(pre_keywords)
