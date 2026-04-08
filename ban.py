@@ -5,7 +5,7 @@ AstrBot ChatImitate Plugin - Ban/Disable Module
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
-from astrbot.api.message_components import Plain, Reply
+from astrbot.api.message_components import Image, Plain, Reply
 from astrbot.core.message.message_event_result import MessageChain
 
 from . import db
@@ -92,7 +92,9 @@ class ReplyBanner:
             if result == DisableStatus.SUCCESS:
                 await event.send(MessageChain([Plain("已禁用该回复")]))
             elif result == DisableStatus.NOT_FOUND:
-                await event.send(MessageChain([Plain("未找到匹配的回复内容，无法禁用")]))
+                await event.send(
+                    MessageChain([Plain("未找到匹配的回复内容，无法禁用")])
+                )
             else:
                 await event.send(MessageChain([Plain("禁用回复失败")]))
             return DisableResult.create_handled()
@@ -128,7 +130,7 @@ class ReplyBanner:
             raise Exception("数据库未初始化")
 
         group_id = event.get_group_id()
-        reply_content = getattr(reply, "message_str", "")
+        reply_content = cls._extract_reply_content(reply)
 
         if not reply_content:
             raise ValueError("无法获取被引用回复的内容")
@@ -136,7 +138,9 @@ class ReplyBanner:
         context_id = await cls._find_context_by_reply(reply_content)
 
         if not context_id:
-            logger.warning("chatimitate: 未找到包含回复 '%s' 的上下文", reply_content[:50])
+            logger.warning(
+                "chatimitate: 未找到包含回复 '%s' 的上下文", reply_content[:50]
+            )
             return DisableStatus.NOT_FOUND
 
         success = await db.db_operations.disable_reply(
@@ -147,10 +151,33 @@ class ReplyBanner:
         )
 
         if success:
-            logger.info("chatimitate: 在群组 %s 中禁用回复 '%s'", group_id, reply_content[:50])
+            logger.info(
+                "chatimitate: 在群组 %s 中禁用回复 '%s'", group_id, reply_content[:50]
+            )
             return DisableStatus.SUCCESS
         else:
             return DisableStatus.FAILED
+
+    @classmethod
+    def _extract_reply_content(cls, reply: Reply) -> str:
+        """从 Reply 组件中提取回复内容，支持图片和文本"""
+        if reply.message_str and reply.message_str.strip():
+            return reply.message_str.strip()
+
+        if reply.chain:
+            parts = []
+            for comp in reply.chain:
+                if isinstance(comp, Plain):
+                    if comp.text and comp.text.strip():
+                        parts.append(comp.text.strip())
+                elif isinstance(comp, Image):
+                    image_url = getattr(comp, "url", None) or getattr(comp, "file", "")
+                    if image_url:
+                        parts.append(f"[图片:{image_url}]")
+            if parts:
+                return "".join(parts)
+
+        return ""
 
     @classmethod
     async def _find_context_by_reply(cls, reply_content: str) -> int | None:
