@@ -83,7 +83,7 @@ class ChatData:
                 jieba_analyse.extract_tags,
                 self.plain_text,
                 topK=keywords_size,
-                withWeight=True
+                withWeight=True,
             )
             self._cached_keywords = [
                 item[0] if isinstance(item, (list, tuple)) else str(item)
@@ -94,7 +94,9 @@ class ChatData:
             logger.warning("chatimitate: event loop closed, using simple tokenize")
             self._cached_keywords = self._simple_tokenize(keywords_size)
         except Exception:
-            logger.warning("chatimitate: failed to extract keywords, using all text", exc_info=True)
+            logger.warning(
+                "chatimitate: failed to extract keywords, using all text", exc_info=True
+            )
             self._cached_keywords = [self.plain_text] if self.plain_text else []
 
         return self._cached_keywords
@@ -105,6 +107,7 @@ class ChatData:
             return []
         # 按空格和标点简单分割
         import re
+
         tokens = re.split(r"[\s,，.。!！?？;；]+", self.plain_text)
         return [t for t in tokens if len(t) > 1][:max_size]
 
@@ -186,7 +189,7 @@ class ChatStateManager:
             self._late_save_time = max(msg.time for msg in save_list)
 
             new_dict = {
-                group_id: group_msgs[-self.config.save_reserved_size:]
+                group_id: group_msgs[-self.config.save_reserved_size :]
                 for group_id, group_msgs in self._message_dict.items()
             }
             self._message_dict.clear()
@@ -196,7 +199,9 @@ class ChatStateManager:
         try:
             await db.db_operations.save_messages_batch(save_list)
         except Exception:
-            logger.warning("chatimitate: batch save failed, trying individual saves", exc_info=True)
+            logger.warning(
+                "chatimitate: batch save failed, trying individual saves", exc_info=True
+            )
             # 批量失败时回退到逐条保存
             for msg in save_list:
                 try:
@@ -215,7 +220,7 @@ class ChatStateManager:
             self._reply_dict[group_id][bot_id].append(reply_data)
             if len(self._reply_dict[group_id][bot_id]) > self.config.save_reserved_size:
                 self._reply_dict[group_id][bot_id] = self._reply_dict[group_id][bot_id][
-                    -self.config.save_reserved_size:
+                    -self.config.save_reserved_size :
                 ]
 
     async def add_message(self, group_id: str, message: ChatMessage) -> None:
@@ -234,12 +239,16 @@ class Chat:
 
     REPLY_FLAG: str = "__REPLY_MARKER__"
 
-    def __init__(self, data: ChatData | AstrMessageEvent, plugin_config: ChatImitateConfig) -> None:
+    def __init__(
+        self, data: ChatData | AstrMessageEvent, plugin_config: ChatImitateConfig
+    ) -> None:
         self.config = plugin_config
         self.state = get_global_state_manager(self.config)
 
         if isinstance(data, AstrMessageEvent):
-            plain_text, message_type, image_info, is_reply, has_media = self._extract_message_content(data)
+            plain_text, message_type, image_info, is_reply, has_media = (
+                self._extract_message_content(data)
+            )
             self.chat_data = ChatData(
                 group_id=data.get_group_id(),
                 user_id=data.get_sender_id(),
@@ -291,7 +300,10 @@ class Chat:
                 has_image = True
                 image_url = comp.url or comp.file or ""
                 if image_url and not image_info:
-                    image_info = {"url": image_url, "hash": self._compute_image_hash(image_url)}
+                    image_info = {
+                        "url": image_url,
+                        "hash": self._compute_image_hash(image_url),
+                    }
             elif isinstance(comp, Record):
                 has_record = True
             elif isinstance(comp, Video):
@@ -304,12 +316,21 @@ class Chat:
         if not plain_text:
             plain_text = event.get_message_str() or ""
 
-        message_type = self._determine_message_type(has_image, has_record, has_video, has_file, bool(plain_text))
+        message_type = self._determine_message_type(
+            has_image, has_record, has_video, has_file, bool(plain_text)
+        )
         has_media = has_image or has_record or has_video or has_file
 
         return plain_text, message_type, image_info, is_reply, has_media
 
-    def _determine_message_type(self, has_image: bool, has_record: bool, has_video: bool, has_file: bool, has_text: bool) -> str:
+    def _determine_message_type(
+        self,
+        has_image: bool,
+        has_record: bool,
+        has_video: bool,
+        has_file: bool,
+        has_text: bool,
+    ) -> str:
         """确定消息类型"""
         types = []
         if has_image:
@@ -338,17 +359,26 @@ class Chat:
         if self.chat_data.plain_text:
             parts.append(self.chat_data.plain_text[:50])
         if self.chat_data.is_image:
-            parts.append(f"[图片:{self.chat_data.image_url or self.chat_data.image_hash}]")
+            parts.append(
+                f"[图片:{self.chat_data.image_url or self.chat_data.image_hash}]"
+            )
         elif self.chat_data.has_media_content:
             parts.append(f"[{self.chat_data.message_type}]")
         return " ".join(parts) if parts else ""
 
     async def learn(self) -> bool:
         """学习消息"""
-        if len(self.chat_data.plain_text.strip()) == 0 and not self.chat_data.has_media_content:
+        if (
+            len(self.chat_data.plain_text.strip()) == 0
+            and not self.chat_data.has_media_content
+        ):
             return False
 
         if self.chat_data.is_image and not self.config.enable_image_learning:
+            return False
+
+        # 不学习 At 自己的消息
+        if f"[at:{self.chat_data.bot_id}]" in self.chat_data.plain_text:
             return False
 
         if db.db_operations is None:
@@ -382,23 +412,34 @@ class Chat:
         keywords_str = await self.chat_data.get_keywords()
 
         await self.state.add_reply(
-            group_id, bot_id,
-            {"time": int(time.time()), "pre_plain_text": self.chat_data.plain_text,
-             "pre_keywords": keywords_str, "reply": self.REPLY_FLAG,
-             "reply_keywords": self.REPLY_FLAG}
+            group_id,
+            bot_id,
+            {
+                "time": int(time.time()),
+                "pre_plain_text": self.chat_data.plain_text,
+                "pre_keywords": keywords_str,
+                "reply": self.REPLY_FLAG,
+                "reply_keywords": self.REPLY_FLAG,
+            },
         )
 
         for item in answer_list:
             await self.state.add_reply(
-                group_id, bot_id,
-                {"time": int(time.time()), "pre_plain_text": self.chat_data.plain_text,
-                 "pre_keywords": keywords_str, "reply": item,
-                 "reply_keywords": answer_keywords}
+                group_id,
+                bot_id,
+                {
+                    "time": int(time.time()),
+                    "pre_plain_text": self.chat_data.plain_text,
+                    "pre_keywords": keywords_str,
+                    "reply": item,
+                    "reply_keywords": answer_keywords,
+                },
             )
 
             if not self.chat_data.has_media_content:
                 await self.state.add_topics(
-                    group_id, [k for k in answer_keywords.split(" ") if not k.startswith("bot")]
+                    group_id,
+                    [k for k in answer_keywords.split(" ") if not k.startswith("bot")],
                 )
 
             keywords_list = await self.chat_data.get_keywords_list()
@@ -474,9 +515,12 @@ class Chat:
         context = await db.db_operations.get_trigger_keyword(pre_keywords)
         if context:
             existing_reply = next(
-                (answer for answer in context.replies
-                 if answer.group_id == group_id and answer.keywords == keywords),
-                None
+                (
+                    answer
+                    for answer in context.replies
+                    if answer.group_id == group_id and answer.keywords == keywords
+                ),
+                None,
             )
 
             if existing_reply:
@@ -486,8 +530,13 @@ class Chat:
                     existing_reply.messages.append(reply_content)
             else:
                 context.replies.append(
-                    ReplyContent(keywords=keywords, group_id=group_id, count=1,
-                               time=cur_time, messages=[reply_content])
+                    ReplyContent(
+                        keywords=keywords,
+                        group_id=group_id,
+                        count=1,
+                        time=cur_time,
+                        messages=[reply_content],
+                    )
                 )
 
             context.time = cur_time
@@ -499,8 +548,13 @@ class Chat:
                 time=cur_time,
                 trigger_count=1,
                 replies=[
-                    ReplyContent(keywords=keywords, group_id=group_id, count=1,
-                                time=cur_time, messages=[reply_content])
+                    ReplyContent(
+                        keywords=keywords,
+                        group_id=group_id,
+                        count=1,
+                        time=cur_time,
+                        messages=[reply_content],
+                    )
                 ],
             )
             await db.db_operations.save_trigger_keyword(context)
@@ -528,7 +582,9 @@ class Chat:
         if keywords_len == ChatData._keywords_size:
             answer_count_threshold -= 1
 
-        cross_group_threshold = 1 if self.chat_data.to_me else self.config.cross_group_threshold
+        cross_group_threshold = (
+            1 if self.chat_data.to_me else self.config.cross_group_threshold
+        )
 
         ban_keywords = await self._find_ban_keywords(context, group_id)
 
@@ -537,9 +593,15 @@ class Chat:
         answers_count: defaultdict[str, int] = defaultdict(int)
 
         group_bot_replies = self.state.get_group_bot_replies(group_id, bot_id)
-        recent_replies = [r["reply_keywords"] for r in group_bot_replies[-self.config.duplicate_reply:]]
+        recent_replies = [
+            r["reply_keywords"]
+            for r in group_bot_replies[-self.config.duplicate_reply :]
+        ]
         recent_message = [
-            m.raw_message for m in self.state.get_group_messages(group_id)[-self.config.duplicate_reply:]
+            m.raw_message
+            for m in self.state.get_group_messages(group_id)[
+                -self.config.duplicate_reply :
+            ]
         ]
 
         def candidate_append(dst: dict[str, ReplyContent], answer: ReplyContent):
@@ -563,7 +625,11 @@ class Chat:
                 continue
 
             answer_key = answer.keywords
-            if answer_key in ban_keywords or answer_key in recent_replies or answer_key == keywords:
+            if (
+                answer_key in ban_keywords
+                or answer_key in recent_replies
+                or answer_key == keywords
+            ):
                 continue
 
             # 检查 messages 是否为空
@@ -575,7 +641,9 @@ class Chat:
             # 修复图片识别：检查是否以 "[图片:" 开头
             if self.chat_data.is_image and not sample_msg.startswith("[图片:"):
                 continue
-            if sample_msg.startswith("bot") and (not self.chat_data.to_me or len(sample_msg) <= 6):
+            if sample_msg.startswith("bot") and (
+                not self.chat_data.to_me or len(sample_msg) <= 6
+            ):
                 continue
             if "\n" in sample_msg:
                 continue
@@ -595,7 +663,9 @@ class Chat:
                     candidate_append(other_group_cache, answer)
                 elif cur_count == cross_group_threshold:
                     if cur_count > 1:
-                        candidate_append(candidate_answers, other_group_cache[answer_key])
+                        candidate_append(
+                            candidate_answers, other_group_cache[answer_key]
+                        )
                     candidate_append(candidate_answers, answer)
                 else:
                     candidate_append(candidate_answers, answer)
@@ -612,7 +682,9 @@ class Chat:
         if not weights or all(w <= 0 for w in weights):
             return None
 
-        final_answer = random.choices(list(candidate_answers.values()), weights=weights)[0]
+        final_answer = random.choices(
+            list(candidate_answers.values()), weights=weights
+        )[0]
         answer_str = random.choice(final_answer.messages).removeprefix("bot")
 
         if (
@@ -635,7 +707,9 @@ class Chat:
         await db.db_operations.clear_expired_triggers(expiration)
 
     @staticmethod
-    async def _find_ban_keywords(context: TriggerKeyword | None, group_id: str) -> set[str]:
+    async def _find_ban_keywords(
+        context: TriggerKeyword | None, group_id: str
+    ) -> set[str]:
         """查找禁用的关键词"""
         ban_keywords: set[str] = set()
 
@@ -698,9 +772,14 @@ def get_global_state_manager(config: ChatImitateConfig) -> ChatStateManager:
                     _sync_with_timeout(_global_state_manager, timeout=5.0)
                 )
             except RuntimeError:
-                logger.warning("chatimitate: no event loop available for sync on config change")
+                logger.warning(
+                    "chatimitate: no event loop available for sync on config change"
+                )
             except Exception:
-                logger.warning("chatimitate: failed to schedule sync on config change", exc_info=True)
+                logger.warning(
+                    "chatimitate: failed to schedule sync on config change",
+                    exc_info=True,
+                )
         _global_state_manager = ChatStateManager(config)
         _global_config = config
 
