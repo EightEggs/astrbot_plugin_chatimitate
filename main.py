@@ -151,10 +151,12 @@ class ChatImitatePlugin(Star):
         full_match = match.group(0)
 
         if full_match.startswith("[图片:"):
-            image_url = match.group(2)
+            image_url = match.group(2).strip()
+            if not image_url:
+                return None
             if image_url.startswith(("http://", "https://")):
-                return Image(file=image_url, url=image_url)
-            return Image(file=image_url)
+                return Image.fromURL(image_url)
+            return None
 
         if full_match.startswith("[at:"):
             qq_id = match.group(3)
