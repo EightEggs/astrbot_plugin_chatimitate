@@ -5,7 +5,7 @@ AstrBot ChatImitate Plugin - Ban/Disable Module
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
-from astrbot.api.message_components import Image, Plain, Reply
+from astrbot.api.message_components import At, AtAll, Image, Plain, Reply
 from astrbot.core.message.message_event_result import MessageChain
 
 from . import db
@@ -160,7 +160,7 @@ class ReplyBanner:
 
     @classmethod
     def _extract_reply_content(cls, reply: Reply) -> str:
-        """从 Reply 组件中提取回复内容，支持图片和文本"""
+        """从 Reply 组件中提取回复内容，支持图片、文本和 At 消息"""
         if reply.message_str and reply.message_str.strip():
             return reply.message_str.strip()
 
@@ -174,6 +174,15 @@ class ReplyBanner:
                     image_url = getattr(comp, "url", None) or getattr(comp, "file", "")
                     if image_url:
                         parts.append(f"[图片:{image_url}]")
+                elif isinstance(comp, At):
+                    qq_id = str(comp.qq) if comp.qq else ""
+                    if qq_id:
+                        if qq_id == "all":
+                            parts.append("[at:all]")
+                        else:
+                            parts.append(f"[at:{qq_id}]")
+                elif isinstance(comp, AtAll):
+                    parts.append("[at:all]")
             if parts:
                 return "".join(parts)
 

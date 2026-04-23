@@ -80,7 +80,7 @@ class ChatData:
             # 检查事件循环状态
             asyncio.get_running_loop()
             keywords = await asyncio.to_thread(
-                jieba_analyse.extract_tags,
+                lambda text, topK, withWeight: jieba_analyse.extract_tags(text, topK=topK, withWeight=withWeight),
                 self.plain_text,
                 topK=keywords_size,
                 withWeight=True,
