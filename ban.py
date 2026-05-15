@@ -161,9 +161,6 @@ class ReplyBanner:
     @classmethod
     def _extract_reply_content(cls, reply: Reply) -> str:
         """从 Reply 组件中提取回复内容，支持图片、文本和 At 消息"""
-        if reply.message_str and reply.message_str.strip():
-            return reply.message_str.strip()
-
         if reply.chain:
             parts = []
             for comp in reply.chain:
@@ -185,6 +182,9 @@ class ReplyBanner:
                     parts.append("[at:all]")
             if parts:
                 return "".join(parts)
+
+        if reply.message_str and reply.message_str.strip():
+            return reply.message_str.strip()
 
         return ""
 
