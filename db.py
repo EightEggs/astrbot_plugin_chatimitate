@@ -440,7 +440,7 @@ class DatabaseOperations:
         """根据回复内容查找 context_id - 使用精确匹配"""
         conn = await self.db.get_connection()
 
-        # 首先尝试精确匹配
+        # 首先尝试精确匹配 messages
         async with conn.execute(
             "SELECT context_id, messages FROM reply_contents WHERE messages LIKE ?",
             (f"%{reply_message}%",)
@@ -451,7 +451,15 @@ class DatabaseOperations:
                     if msg == reply_message:
                         return row["context_id"]
 
-        # 备选：通过关键词查找
+        # 备选：通过回复关键词查找（适用于图片等媒体消息）
+        async with conn.execute(
+            "SELECT context_id FROM reply_contents WHERE keywords = ?", (reply_message,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return row["context_id"]
+
+        # 备选：通过触发关键词查找
         async with conn.execute(
             "SELECT id FROM trigger_keywords WHERE keywords = ?", (reply_message,)
         ) as cursor:
