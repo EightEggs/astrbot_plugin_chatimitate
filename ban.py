@@ -169,7 +169,7 @@ class ReplyBanner:
                     if comp.text and comp.text.strip():
                         parts.append(comp.text.strip())
                 elif isinstance(comp, Image):
-                    image_url = getattr(comp, "file") or getattr(comp, "url")
+                    image_url = getattr(comp, "url") or getattr(comp, "file")
                     if image_url:
                         image_hash = compute_image_hash(image_url)
                         parts.append(f"[图片:{image_hash}]")
