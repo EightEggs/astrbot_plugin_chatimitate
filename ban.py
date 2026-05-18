@@ -168,7 +168,7 @@ class ReplyBanner:
                     if comp.text and comp.text.strip():
                         parts.append(comp.text.strip())
                 elif isinstance(comp, Image):
-                    image_url = getattr(comp, "url", None) or getattr(comp, "file", "")
+                    image_url = getattr(comp, "file") or getattr(comp, "url")
                     if image_url:
                         parts.append(f"[图片:{image_url}]")
                 elif isinstance(comp, At):
