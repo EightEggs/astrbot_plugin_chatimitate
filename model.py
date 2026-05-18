@@ -3,7 +3,6 @@ AstrBot ChatImitate Plugin - Core Logic Module
 """
 
 import asyncio
-import hashlib
 import random
 import time
 from collections import defaultdict, deque
@@ -18,7 +17,7 @@ from astrbot.api.message_components import At, File, Image, Plain, Record, Reply
 
 from . import db
 from .config import ChatImitateConfig
-from .db import ChatMessage, ReplyContent, TriggerKeyword
+from .db import ChatMessage, ReplyContent, TriggerKeyword, compute_image_hash
 
 
 @dataclass
@@ -302,7 +301,7 @@ class Chat:
                 if image_url and not image_info:
                     image_info = {
                         "url": image_url,
-                        "hash": self._compute_image_hash(image_url),
+                        "hash": compute_image_hash(image_url),
                     }
             elif isinstance(comp, Record):
                 has_record = True
@@ -347,11 +346,6 @@ class Chat:
         elif len(types) == 1:
             return types[0] if not has_text else "mixed"
         return "mixed"
-
-    def _compute_image_hash(self, image_url: str) -> str:
-        """计算图片哈希"""
-        url_parts = image_url.split("/")[-1] if "/" in image_url else image_url
-        return hashlib.md5(url_parts.encode()).hexdigest()[:16]
 
     def _build_raw_message_description(self) -> str:
         """构建原始消息描述"""

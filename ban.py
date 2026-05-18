@@ -9,6 +9,7 @@ from astrbot.api.message_components import At, AtAll, Image, Plain, Reply
 from astrbot.core.message.message_event_result import MessageChain
 
 from . import db
+from .db import compute_image_hash
 
 
 class DisableStatus:
@@ -170,7 +171,8 @@ class ReplyBanner:
                 elif isinstance(comp, Image):
                     image_url = getattr(comp, "file") or getattr(comp, "url")
                     if image_url:
-                        parts.append(f"[图片:{image_url}]")
+                        image_hash = compute_image_hash(image_url)
+                        parts.append(f"[图片:{image_hash}]")
                 elif isinstance(comp, At):
                     qq_id = str(comp.qq) if comp.qq else ""
                     if qq_id:

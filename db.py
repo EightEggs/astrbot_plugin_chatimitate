@@ -3,6 +3,7 @@ AstrBot ChatImitate Plugin - Database Module
 """
 
 import asyncio
+import hashlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +11,12 @@ from pathlib import Path
 import aiosqlite
 
 from astrbot.api import logger
+
+
+def compute_image_hash(image_url: str) -> str:
+    """计算图片哈希"""
+    url_parts = image_url.split("/")[-1] if "/" in image_url else image_url
+    return hashlib.md5(url_parts.encode()).hexdigest()[:16]
 
 # 消息分隔符 - 用于在数据库中存储消息列表
 MESSAGE_SEPARATOR = "\x00"
