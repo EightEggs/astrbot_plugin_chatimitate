@@ -1,6 +1,6 @@
 """
 AstrBot ChatImitate Plugin - Ban/Disable Module
-管理员禁用回复功能模块
+Admin reply disabling functionality.
 """
 
 from astrbot.api import logger
@@ -13,7 +13,7 @@ from .db import compute_image_hash
 
 
 class DisableStatus:
-    """禁用操作状态枚举"""
+    """Disable operation status."""
 
     SUCCESS = "success"
     NOT_FOUND = "not_found"
@@ -21,7 +21,7 @@ class DisableStatus:
 
 
 class DisableResult:
-    """禁用处理结果"""
+    """Result of disable handling."""
 
     def __init__(self, is_handled: bool, status: str | None = None):
         self.handled = is_handled
@@ -37,9 +37,8 @@ class DisableResult:
 
 
 class ReplyBanner:
-    """回复禁用管理器"""
+    """Reply disable manager."""
 
-    # 精确匹配命令
     EXACT_COMMANDS = [
         "禁止",
         "禁用",
@@ -49,7 +48,6 @@ class ReplyBanner:
         "ban",
     ]
 
-    # 前缀匹配命令
     PREFIX_COMMANDS = [
         "禁止说",
         "禁止这个",
@@ -60,7 +58,7 @@ class ReplyBanner:
 
     @classmethod
     async def handle_admin_disable(cls, event: AstrMessageEvent) -> DisableResult:
-        """处理管理员禁用回复，返回明确的三态结果"""
+        """Handle admin disable reply command, returns tri-state result."""
         message_chain = event.get_messages()
         if not message_chain:
             return DisableResult.create_not_handled()
@@ -106,18 +104,16 @@ class ReplyBanner:
 
     @classmethod
     def _is_disable_command(cls, text: str) -> bool:
-        """检查是否是禁用命令 - 使用精确匹配避免误触发"""
+        """Check if text is a disable command using exact and prefix matching."""
         if not text:
             return False
 
         text_lower = text.lower().strip()
 
-        # 精确匹配
         for cmd in cls.EXACT_COMMANDS:
             if text_lower == cmd:
                 return True
 
-        # 前缀匹配
         for cmd in cls.PREFIX_COMMANDS:
             if text_lower.startswith(cmd):
                 return True
@@ -126,7 +122,7 @@ class ReplyBanner:
 
     @classmethod
     async def _disable_reply(cls, reply: Reply, event: AstrMessageEvent) -> str:
-        """禁用引用的回复，返回明确的状态"""
+        """Disable the referenced reply, returns status string."""
         if not db.db_operations:
             raise Exception("数据库未初始化")
 
@@ -161,7 +157,7 @@ class ReplyBanner:
 
     @classmethod
     def _extract_reply_content(cls, reply: Reply) -> str:
-        """从 Reply 组件中提取回复内容，支持图片、文本和 At 消息"""
+        """Extract reply content from Reply component, supporting images, text and At."""
         if reply.chain:
             parts = []
             for comp in reply.chain:
@@ -192,7 +188,7 @@ class ReplyBanner:
 
     @classmethod
     async def _find_context_by_reply(cls, reply_content: str) -> int | None:
-        """根据回复内容查找 context_id"""
+        """Find context_id by reply content."""
         if not db.db_operations:
             return None
         return await db.db_operations.find_context_by_reply(reply_content)

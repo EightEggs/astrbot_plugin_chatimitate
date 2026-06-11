@@ -23,15 +23,13 @@ class ChatImitatePlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
-        self.context = context
         self.config = ChatImitateConfig(config)
         self._stop_event = asyncio.Event()
         self._bg_task: asyncio.Task | None = None
 
     async def initialize(self):
-        """异步初始化"""
         if not self.config.validate():
-            logger.error("chatimitate: 配置验证失败，请检查配置")
+            logger.error("chatimitate: config validation failed, please check config")
             return
 
         data_dir = StarTools.get_data_dir(self.name)
@@ -40,7 +38,6 @@ class ChatImitatePlugin(Star):
         logger.info("chatimitate: plugin initialized")
 
     async def terminate(self):
-        """插件销毁"""
         self._stop_event.set()
         if self._bg_task:
             self._bg_task.cancel()
@@ -64,7 +61,6 @@ class ChatImitatePlugin(Star):
         logger.info("chatimitate: plugin terminated")
 
     async def _periodic_maintenance(self):
-        """定期维护任务"""
         last_cleanup_day: int | None = None
 
         while not self._stop_event.is_set():
@@ -88,11 +84,9 @@ class ChatImitatePlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def on_group_message(self, event: AstrMessageEvent):
-        """处理群消息"""
         if event.get_sender_id() == event.get_self_id():
             return
 
-        # 处理管理员禁用命令
         disable_result = await ReplyBanner.handle_admin_disable(event)
         if disable_result.handled:
             return
@@ -109,13 +103,11 @@ class ChatImitatePlugin(Star):
         except Exception as e:
             logger.warning("chatimitate: learn/answer failed: %s", e, exc_info=True)
 
-    # 预编译正则表达式，避免每次重复编译
     _MSG_PATTERN = re.compile(
         r"(\[图片:(.+?)\]|\[at:(.+?)\]|\[face:(\d+)\]|\[语音\]|\[视频\]|\[文件\])"
     )
 
     def _build_message_chain(self, msg: str) -> MessageChain | None:
-        """构建消息链"""
         if not msg:
             return None
 
@@ -125,20 +117,17 @@ class ChatImitatePlugin(Star):
         for match in self._MSG_PATTERN.finditer(msg):
             start, end = match.span()
 
-            # 添加标记前的纯文本
             if start > last_end:
                 text = msg[last_end:start]
                 if text.strip():
                     components.append(Plain(text))
 
-            # 解析特殊标记
             component = self._parse_special_tag(match)
             if component:
                 components.append(component)
 
             last_end = end
 
-        # 添加剩余文本
         if last_end < len(msg):
             remaining = msg[last_end:]
             if remaining.strip():
@@ -147,7 +136,6 @@ class ChatImitatePlugin(Star):
         return MessageChain(components) if components else None
 
     def _parse_special_tag(self, match: re.Match) -> object | None:
-        """解析特殊标记"""
         full_match = match.group(0)
 
         if full_match.startswith("[图片:"):
@@ -165,5 +153,4 @@ class ChatImitatePlugin(Star):
         if full_match.startswith("[face:"):
             return Face(id=int(match.group(4)))
 
-        # [语音], [视频], [文件] 返回 None（跳过）
         return None

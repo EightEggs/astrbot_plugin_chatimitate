@@ -1,20 +1,14 @@
 {
-  "debug_message_format": {
-    "description": "是否输出详细调试日志",
-    "type": "bool",
-    "default": false,
-    "hint": "开启后会在日志中打印每条消息的完整结构，仅建议在调试问题时临时开启，日常使用请关闭"
-  },
   "learning": {
-    "description": "学习机制配置",
+    "description": "学习机制",
     "type": "object",
-    "hint": "控制机器人如何学习和记忆对话内容",
+    "hint": "控制机器人如何从群聊中学习和记忆对话内容",
     "items": {
       "answer_threshold": {
         "description": "触发回复的学习次数",
         "type": "int",
         "default": 3,
-        "hint": "数值越小回复越频繁（容易乱回复），数值越大回复越谨慎（可能错过回复）。建议范围：2-5"
+        "hint": "某个关键词组合需要出现多少次后，机器人才会开始用它回复。数值越小回复越频繁（容易乱回复），数值越大回复越谨慎（可能错过回复）。建议范围：2-5"
       },
       "answer_threshold_weights": {
         "description": "回复频率权重分布",
@@ -50,17 +44,17 @@
         "description": "回复分割概率",
         "type": "float",
         "default": 0.5,
-        "hint": "当回复内容包含逗号时，有多大几率只发送逗号前的一半。0.5 表示 50% 的概率会分割，让回复更自然"
+        "hint": "当回复内容包含逗号时，有多大几率只发送逗号前的一半。设为 0 可关闭此功能"
       }
     }
   },
   "storage": {
-    "description": "数据存储配置",
+    "description": "数据存储",
     "type": "object",
     "hint": "控制聊天记录的保存和清理策略",
     "items": {
       "save_time_threshold": {
-        "description": "定时保存间隔",
+        "description": "定时保存间隔（秒）",
         "type": "int",
         "default": 60,
         "hint": "每隔多少秒将内存中的聊天记录保存到数据库。数值越小数据越安全，但频繁写入可能影响性能"
@@ -69,7 +63,7 @@
         "description": "批量保存阈值",
         "type": "int",
         "default": 10,
-        "hint": "每个群聊积累多少条消息后触发保存。与上一个配置任一条件满足即触发保存"
+        "hint": "每个群聊积累多少条消息后触发保存。与定时保存任一条件满足即触发"
       },
       "save_reserved_size": {
         "description": "内存保留数量",
@@ -81,14 +75,14 @@
         "description": "数据清理天数",
         "type": "int",
         "default": 32,
-        "hint": "清理多少天内未学会的聊天上下文。数值越小清理越频繁，数据库越小；数值越大保留的历史越多。建议范围：20-60"
+        "hint": "清理多少天前的未成熟学习数据。数值越小清理越频繁，数据库越小；数值越大保留的历史越多"
       }
     }
   },
   "media": {
-    "description": "多媒体支持配置",
+    "description": "多媒体支持",
     "type": "object",
-    "hint": "控制对图片等多媒体消息的支持",
+    "hint": "控制对图片等多媒体消息的学习和回复",
     "items": {
       "enable_image_learning": {
         "description": "启用图片学习",

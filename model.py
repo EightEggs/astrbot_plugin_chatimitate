@@ -4,6 +4,7 @@ AstrBot ChatImitate Plugin - Core Logic Module
 
 import asyncio
 import random
+import re
 import time
 from collections import defaultdict, deque
 from collections.abc import AsyncGenerator
@@ -101,12 +102,9 @@ class ChatData:
         return self._cached_keywords
 
     def _simple_tokenize(self, max_size: int = 2) -> list[str]:
-        """简单分词（事件循环不可用时回退）"""
+        """Simple tokenization fallback when event loop is unavailable."""
         if not self.plain_text:
             return []
-        # 按空格和标点简单分割
-        import re
-
         tokens = re.split(r"[\s,，.。!！?？;；]+", self.plain_text)
         return [t for t in tokens if len(t) > 1][:max_size]
 
@@ -167,7 +165,7 @@ class ChatStateManager:
         self._late_save_time: int = 0
 
     async def _sync(self, cur_time: int | None = None):
-        """持久化消息到数据库（批量提交）"""
+        """Persist messages to database (batch commit)."""
         if db.db_operations is None:
             logger.warning("chatimitate: db_operations not initialized")
             return
@@ -194,14 +192,12 @@ class ChatStateManager:
             self._message_dict.clear()
             self._message_dict.update(new_dict)
 
-        # 使用批量保存替代逐条保存
         try:
             await db.db_operations.save_messages_batch(save_list)
         except Exception:
             logger.warning(
                 "chatimitate: batch save failed, trying individual saves", exc_info=True
             )
-            # 批量失败时回退到逐条保存
             for msg in save_list:
                 try:
                     await db.db_operations.save_message(msg)
@@ -234,7 +230,7 @@ class ChatStateManager:
 
 
 class Chat:
-    """聊天学习和回复核心类"""
+    """Core chat learning and reply class."""
 
     REPLY_FLAG: str = "__REPLY_MARKER__"
 
@@ -267,7 +263,7 @@ class Chat:
     def _extract_message_content(
         self, event: AstrMessageEvent
     ) -> tuple[str, str, dict | None, bool, bool]:
-        """提取消息内容"""
+        """Extract message content from event."""
         plain_text_parts = []
         at_parts = []
         message_chain = event.get_messages()
@@ -286,7 +282,6 @@ class Chat:
                 if text:
                     plain_text_parts.append(text)
             elif isinstance(comp, At):
-                # 将 At 消息转换为 [at:qq] 格式存储
                 qq_id = str(comp.qq) if comp.qq else ""
                 if qq_id:
                     if qq_id == "all":
@@ -310,7 +305,6 @@ class Chat:
             elif isinstance(comp, File):
                 has_file = True
 
-        # 合并文本和 At 部分
         plain_text = " ".join(plain_text_parts + at_parts)
         if not plain_text:
             plain_text = event.get_message_str() or ""
@@ -330,7 +324,7 @@ class Chat:
         has_file: bool,
         has_text: bool,
     ) -> str:
-        """确定消息类型"""
+        """Determine message type from components."""
         types = []
         if has_image:
             types.append("image")
@@ -342,13 +336,13 @@ class Chat:
             types.append("file")
 
         if len(types) == 0:
-            return "text" if has_text else "text"
+            return "text"
         elif len(types) == 1:
             return types[0] if not has_text else "mixed"
         return "mixed"
 
     def _build_raw_message_description(self) -> str:
-        """构建原始消息描述"""
+        """Build a short description of the raw message."""
         parts = []
         if self.chat_data.plain_text:
             parts.append(self.chat_data.plain_text[:50])
@@ -361,7 +355,7 @@ class Chat:
         return " ".join(parts) if parts else ""
 
     async def learn(self) -> bool:
-        """学习消息"""
+        """Learn from incoming message."""
         if (
             len(self.chat_data.plain_text.strip()) == 0
             and not self.chat_data.has_media_content
@@ -371,7 +365,6 @@ class Chat:
         if self.chat_data.is_image and not self.config.enable_image_learning:
             return False
 
-        # 不学习 At 自己的消息
         if f"[at:{self.chat_data.bot_id}]" in self.chat_data.plain_text:
             return False
 
@@ -390,7 +383,7 @@ class Chat:
         return True
 
     async def answer(self) -> AsyncGenerator[str, None]:
-        """生成回复"""
+        """Generate reply based on learned context."""
         if self.chat_data.is_plain_text and len(self.chat_data.plain_text) < 2:
             return
 
@@ -402,7 +395,6 @@ class Chat:
         group_id = self.chat_data.group_id
         bot_id = self.chat_data.bot_id
 
-        # 获取关键词字符串（异步）
         keywords_str = await self.chat_data.get_keywords()
 
         await self.state.add_reply(
@@ -441,11 +433,10 @@ class Chat:
             yield item
 
     async def _message_insert(self):
-        """插入消息到缓存"""
+        """Insert message into in-memory cache."""
         group_id = self.chat_data.group_id
         raw_message_desc = self._build_raw_message_description()
 
-        # 获取关键词字符串（异步）
         keywords_str = await self.chat_data.get_keywords()
 
         await self.state.add_message(
@@ -480,7 +471,7 @@ class Chat:
             await self.state._sync(cur_time)
 
     async def _context_insert(self, pre_msg: ChatMessage | None):
-        """插入上下文关系"""
+        """Insert context relationship between consecutive messages."""
         if not pre_msg or db.db_operations is None:
             return
 
@@ -491,19 +482,16 @@ class Chat:
         if self.chat_data.is_reply:
             return
 
-        # 异步获取关键词
         keywords = await self.chat_data.get_keywords()
         group_id = self.chat_data.group_id
         pre_keywords = pre_msg.keywords
         cur_time = self.chat_data.time
 
-        # 跳过纯媒体消息作为触发关键词（避免 [video], [record], [file] 等累积高 trigger_count）
         if pre_keywords.startswith("[") and not pre_keywords.startswith("[图片:"):
             return
 
         reply_content = plain_text
         if self.chat_data.is_image and self.chat_data.image_url:
-            # 存储图片 URL 而不是 hash，因为 URL 才能用于发送
             reply_content = f"[图片:{self.chat_data.image_url}]"
 
         context = await db.db_operations.get_trigger_keyword(pre_keywords)
@@ -554,7 +542,7 @@ class Chat:
             await db.db_operations.save_trigger_keyword(context)
 
     async def _context_find(self) -> tuple[list[str], str] | None:
-        """查找上下文并生成回复"""
+        """Find context and generate reply."""
         group_id = self.chat_data.group_id
         keywords = await self.chat_data.get_keywords()
         bot_id = self.chat_data.bot_id
@@ -571,7 +559,6 @@ class Chat:
             weights=self.config.answer_threshold_weights,
         )[0]
 
-        # 异步获取关键词长度
         keywords_len = await self.chat_data.get_keywords_len()
         if keywords_len == ChatData._keywords_size:
             answer_count_threshold -= 1
@@ -598,22 +585,6 @@ class Chat:
             ]
         ]
 
-        def candidate_append(dst: dict[str, ReplyContent], answer: ReplyContent):
-            answer_key = answer.keywords
-            is_pure_text = not answer_key.startswith("[")
-            if is_pure_text:
-                topics = self.state._recent_topics[group_id]
-                for key in answer_key.split(" "):
-                    if key in topics:
-                        answer.topical += topics.count(key)
-
-            if answer_key not in dst:
-                dst[answer_key] = answer
-            else:
-                pre_answer = dst[answer_key]
-                pre_answer.count += answer.count
-                pre_answer.messages += answer.messages
-
         for answer in context.replies:
             if answer.count < answer_count_threshold:
                 continue
@@ -626,13 +597,11 @@ class Chat:
             ):
                 continue
 
-            # 检查 messages 是否为空
             if not answer.messages:
                 continue
 
             sample_msg = answer.messages[0]
 
-            # 修复图片识别：检查是否以 "[图片:" 开头
             if self.chat_data.is_image and not sample_msg.startswith("[图片:"):
                 continue
             if sample_msg.startswith("bot") and (
@@ -647,39 +616,69 @@ class Chat:
                 continue
 
             if answer.group_id == group_id:
-                candidate_append(candidate_answers, answer)
+                self._append_candidate(candidate_answers, group_id, answer)
             elif sample_msg.startswith("[at:"):
                 continue
             else:
                 answers_count[answer_key] += 1
                 cur_count = answers_count[answer_key]
                 if cur_count < cross_group_threshold:
-                    candidate_append(other_group_cache, answer)
+                    self._append_candidate(other_group_cache, group_id, answer)
                 elif cur_count == cross_group_threshold:
                     if cur_count > 1:
-                        candidate_append(
-                            candidate_answers, other_group_cache[answer_key]
+                        self._append_candidate(
+                            candidate_answers, group_id, other_group_cache[answer_key]
                         )
-                    candidate_append(candidate_answers, answer)
+                    self._append_candidate(candidate_answers, group_id, answer)
                 else:
-                    candidate_append(candidate_answers, answer)
+                    self._append_candidate(candidate_answers, group_id, answer)
 
         if not candidate_answers:
             return None
 
+        return self._pick_final_answer(candidate_answers, group_id)
+
+    def _append_candidate(
+        self, dst: dict[str, ReplyContent], group_id: str, answer: ReplyContent
+    ):
+        """Add a reply candidate to the destination dict, merging if needed."""
+        answer_key = answer.keywords
+        if not answer_key.startswith("["):
+            topics = self.state._recent_topics[group_id]
+            for key in answer_key.split(" "):
+                if key in topics:
+                    answer.topical += topics.count(key)
+
+        if answer_key not in dst:
+            dst[answer_key] = answer
+        else:
+            pre_answer = dst[answer_key]
+            pre_answer.count += answer.count
+            pre_answer.messages += answer.messages
+
+    def _pick_final_answer(
+        self, candidate_answers: dict[str, ReplyContent], group_id: str
+    ) -> tuple[list[str], str] | None:
+        """Select the final answer using weighted random choice."""
         weights = [
             min(answer.count, 10) + answer.topical * self.config.topics_importance
             for answer in candidate_answers.values()
         ]
 
-        # 保底校验：确保权重列表非空且不全为0
         if not weights or all(w <= 0 for w in weights):
             return None
 
         final_answer = random.choices(
             list(candidate_answers.values()), weights=weights
         )[0]
-        answer_str = random.choice(final_answer.messages).removeprefix("bot")
+
+        non_empty = [m for m in final_answer.messages if m.strip()]
+        if not non_empty:
+            return None
+
+        answer_str = random.choice(non_empty).removeprefix("bot")
+        if not answer_str.strip():
+            return None
 
         if (
             0 < answer_str.count(",") <= 3
@@ -691,7 +690,7 @@ class Chat:
 
     @staticmethod
     async def clearup_context(expired_days: int = 15) -> None:
-        """清理过期上下文"""
+        """Clean up expired context."""
         cur_time = int(time.time())
         expiration = cur_time - expired_days * 24 * 3600
 
@@ -704,7 +703,7 @@ class Chat:
     async def _find_ban_keywords(
         context: TriggerKeyword | None, group_id: str
     ) -> set[str]:
-        """查找禁用的关键词"""
+        """Find disabled keywords for the given group."""
         ban_keywords: set[str] = set()
 
         if context is not None and hasattr(context, "disabled"):
@@ -716,7 +715,7 @@ class Chat:
 
     @staticmethod
     async def sync():
-        """同步数据到数据库"""
+        """Sync data to database."""
         global _global_state_manager
         if _global_state_manager is None or db.db_operations is None:
             return
@@ -729,7 +728,7 @@ _sync_task: asyncio.Task | None = None
 
 
 async def _sync_with_error_handling(state_manager: ChatStateManager):
-    """带异常处理的同步任务"""
+    """Sync task with error handling."""
     try:
         await state_manager._sync()
     except Exception:
@@ -737,7 +736,7 @@ async def _sync_with_error_handling(state_manager: ChatStateManager):
 
 
 async def _sync_with_timeout(state_manager: ChatStateManager, timeout: float = 5.0):
-    """带超时的同步任务"""
+    """Sync task with timeout protection."""
     try:
         await asyncio.wait_for(state_manager._sync(), timeout=timeout)
     except asyncio.TimeoutError:
@@ -747,21 +746,18 @@ async def _sync_with_timeout(state_manager: ChatStateManager, timeout: float = 5
 
 
 def get_global_state_manager(config: ChatImitateConfig) -> ChatStateManager:
-    """获取全局状态管理器（单例）"""
+    """Get or create the global state manager (singleton)."""
     global _global_state_manager, _global_config, _sync_task
 
     if _global_state_manager is None:
         _global_state_manager = ChatStateManager(config)
         _global_config = config
     elif _global_config != config:
-        # 配置变更时，先同步旧数据，再创建新实例
         if _global_state_manager is not None:
-            # 取消之前的同步任务
             if _sync_task is not None and not _sync_task.done():
                 _sync_task.cancel()
-            # 同步旧数据（带超时保护）- 创建新任务
             try:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 _sync_task = loop.create_task(
                     _sync_with_timeout(_global_state_manager, timeout=5.0)
                 )

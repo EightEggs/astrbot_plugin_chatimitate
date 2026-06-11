@@ -14,21 +14,21 @@ from astrbot.api import logger
 
 
 def compute_image_hash(image_url: str) -> str:
-    """计算图片哈希"""
+    """Compute a short hash for an image URL."""
     url_parts = image_url.split("/")[-1] if "/" in image_url else image_url
     return hashlib.md5(url_parts.encode()).hexdigest()[:16]
 
-# 消息分隔符 - 用于在数据库中存储消息列表
+
 MESSAGE_SEPARATOR = "\x00"
 
 
 def serialize_messages(messages: list[str]) -> str:
-    """将消息列表序列化为字符串存储"""
+    """Serialize a list of messages to a single string."""
     return MESSAGE_SEPARATOR.join(messages)
 
 
 def deserialize_messages(data: str) -> list[str]:
-    """将存储的字符串反序列化为消息列表"""
+    """Deserialize a stored string back to a list of messages."""
     if not data:
         return []
     return data.split(MESSAGE_SEPARATOR)
@@ -36,7 +36,7 @@ def deserialize_messages(data: str) -> list[str]:
 
 @dataclass
 class ChatMessage:
-    """聊天记录数据模型"""
+    """Chat message data model."""
 
     group_id: str
     user_id: str
@@ -49,7 +49,7 @@ class ChatMessage:
 
 @dataclass
 class ReplyContent:
-    """回复内容数据模型"""
+    """Reply content data model."""
 
     keywords: str
     group_id: str
@@ -61,7 +61,7 @@ class ReplyContent:
 
 @dataclass
 class DisabledReply:
-    """禁用回复数据模型"""
+    """Disabled reply data model."""
 
     keywords: str
     group_id: str
@@ -71,7 +71,7 @@ class DisabledReply:
 
 @dataclass
 class TriggerKeyword:
-    """触发关键词数据模型"""
+    """Trigger keyword data model."""
 
     keywords: str
     time: int = field(default_factory=lambda: int(time.time()))
@@ -82,7 +82,7 @@ class TriggerKeyword:
 
 
 class DatabaseManager:
-    """异步 SQLite 数据库管理器"""
+    """Async SQLite database manager."""
 
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir
@@ -92,20 +92,30 @@ class DatabaseManager:
         self._lock = asyncio.Lock()
 
     async def get_connection(self) -> aiosqlite.Connection:
-        """获取异步数据库连接"""
-        if self._connection is None:
-            self._connection = await aiosqlite.connect(self.db_path)
-            await self._connection.execute("PRAGMA journal_mode = WAL")
-            await self._connection.execute("PRAGMA foreign_keys = ON")
-            self._connection.row_factory = aiosqlite.Row
+        """Get async database connection with health check."""
+        if self._connection is not None:
+            try:
+                await self._connection.execute("SELECT 1")
+                return self._connection
+            except (aiosqlite.Error, AttributeError):
+                logger.warning("chatimitate: stale DB connection, reconnecting")
+                try:
+                    await self._connection.close()
+                except Exception:
+                    pass
+                self._connection = None
+
+        self._connection = await aiosqlite.connect(self.db_path)
+        await self._connection.execute("PRAGMA journal_mode = WAL")
+        await self._connection.execute("PRAGMA foreign_keys = ON")
+        self._connection.row_factory = aiosqlite.Row
         return self._connection
 
     async def initialize(self):
-        """初始化数据库表"""
+        """Initialize database tables."""
         conn = await self.get_connection()
 
         tables = [
-            # 聊天记录表
             """CREATE TABLE IF NOT EXISTS chat_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_id TEXT NOT NULL,
@@ -117,7 +127,6 @@ class DatabaseManager:
                 time INTEGER DEFAULT (strftime('%s', 'now')),
                 created_at INTEGER DEFAULT (strftime('%s', 'now'))
             )""",
-            # 触发关键词表
             """CREATE TABLE IF NOT EXISTS trigger_keywords (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 keywords TEXT UNIQUE NOT NULL,
@@ -127,7 +136,6 @@ class DatabaseManager:
                 created_at INTEGER DEFAULT (strftime('%s', 'now')),
                 updated_at INTEGER DEFAULT (strftime('%s', 'now'))
             )""",
-            # 回复内容表
             """CREATE TABLE IF NOT EXISTS reply_contents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 context_id INTEGER NOT NULL,
@@ -141,7 +149,6 @@ class DatabaseManager:
                 updated_at INTEGER DEFAULT (strftime('%s', 'now')),
                 FOREIGN KEY (context_id) REFERENCES trigger_keywords (id) ON DELETE CASCADE
             )""",
-            # 禁用回复表
             """CREATE TABLE IF NOT EXISTS disabled_replies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 context_id INTEGER NOT NULL,
@@ -157,7 +164,6 @@ class DatabaseManager:
         for table_sql in tables:
             await conn.execute(table_sql)
 
-        # 创建索引
         indexes = [
             "CREATE INDEX IF NOT EXISTS idx_chat_messages_time ON chat_messages(time)",
             "CREATE INDEX IF NOT EXISTS idx_chat_messages_group ON chat_messages(group_id, time)",
@@ -166,7 +172,6 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_reply_contents_group_keywords ON reply_contents(group_id, keywords)",
             "CREATE INDEX IF NOT EXISTS idx_disabled_replies_context ON disabled_replies(context_id)",
             "CREATE INDEX IF NOT EXISTS idx_disabled_replies_group ON disabled_replies(group_id)",
-            # 新增：用于 find_context_by_reply 的索引
             "CREATE INDEX IF NOT EXISTS idx_reply_contents_messages ON reply_contents(messages)",
         ]
 
@@ -176,20 +181,20 @@ class DatabaseManager:
         await conn.commit()
 
     async def close(self):
-        """关闭数据库连接"""
+        """Close database connection."""
         if self._connection:
             await self._connection.close()
             self._connection = None
 
 
 class DatabaseOperations:
-    """数据库操作类"""
+    """Database operation methods."""
 
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
 
     async def save_message(self, message: ChatMessage) -> int:
-        """保存聊天记录"""
+        """Save a single chat message."""
         conn = await self.db.get_connection()
         cursor = await conn.execute(
             """INSERT INTO chat_messages
@@ -209,7 +214,7 @@ class DatabaseOperations:
         return cursor.lastrowid or 0
 
     async def save_messages_batch(self, messages: list[ChatMessage]) -> int:
-        """批量保存聊天记录"""
+        """Batch save chat messages."""
         if not messages:
             return 0
 
@@ -242,7 +247,7 @@ class DatabaseOperations:
             return 0
 
     async def get_trigger_keyword(self, keywords: str) -> TriggerKeyword | None:
-        """获取触发关键词及其关联数据"""
+        """Get trigger keyword and its associated data."""
         conn = await self.db.get_connection()
 
         async with conn.execute(
@@ -252,7 +257,6 @@ class DatabaseOperations:
             if not trigger_row:
                 return None
 
-        # 获取回复内容
         replies = []
         async with conn.execute(
             "SELECT * FROM reply_contents WHERE context_id = ?", (trigger_row["id"],)
@@ -269,7 +273,6 @@ class DatabaseOperations:
                     )
                 )
 
-        # 获取禁用记录
         disabled = []
         async with conn.execute(
             "SELECT * FROM disabled_replies WHERE context_id = ?", (trigger_row["id"],)
@@ -294,14 +297,12 @@ class DatabaseOperations:
         )
 
     async def save_trigger_keyword(self, trigger: TriggerKeyword) -> None:
-        """保存触发关键词及其关联数据（带事务保护）"""
+        """Save trigger keyword and associated data with transaction protection."""
         async with self.db._lock:
             conn = await self.db.get_connection()
 
             await conn.execute("BEGIN IMMEDIATE")
             try:
-                # 使用 INSERT ... ON CONFLICT UPDATE 替代 INSERT OR REPLACE
-                # 避免 REPLACE 的先删后插导致级联删除
                 cursor = await conn.execute(
                     """INSERT INTO trigger_keywords
                     (keywords, time, trigger_count, clear_time, updated_at)
@@ -325,9 +326,9 @@ class DatabaseOperations:
                 async with conn.execute(
                     "SELECT id, keywords FROM reply_contents WHERE context_id = ?",
                     (context_id,),
-                ) as cursor:
-                    async for row in cursor:
-                        existing_replies[row["keywords"]] = row["id"]
+                ) as reply_cursor:
+                    async for reply_row in reply_cursor:
+                        existing_replies[reply_row["keywords"]] = reply_row["id"]
 
                 for reply in trigger.replies:
                     if reply.keywords in existing_replies:
@@ -368,9 +369,9 @@ class DatabaseOperations:
                 async with conn.execute(
                     "SELECT id, keywords FROM disabled_replies WHERE context_id = ?",
                     (context_id,),
-                ) as cursor:
-                    async for row in cursor:
-                        existing_disabled[row["keywords"]] = row["id"]
+                ) as disabled_cursor:
+                    async for disabled_row in disabled_cursor:
+                        existing_disabled[disabled_row["keywords"]] = disabled_row["id"]
 
                 for disabled in trigger.disabled:
                     if disabled.keywords in existing_disabled:
@@ -413,20 +414,18 @@ class DatabaseOperations:
     async def disable_reply(
         self, context_id: int, keywords: str, group_id: str, reason: str = ""
     ) -> bool:
-        """禁用某个回复，带去重检查"""
+        """Disable a reply with deduplication check."""
         conn = await self.db.get_connection()
 
         async with self.db._lock:
             await conn.execute("BEGIN IMMEDIATE")
             try:
-                # 检查是否已存在相同的禁用记录
                 async with conn.execute(
                     """SELECT 1 FROM disabled_replies
                     WHERE context_id = ? AND keywords = ? AND group_id = ?""",
                     (context_id, keywords, group_id),
                 ) as cursor:
                     if await cursor.fetchone():
-                        # 已存在，无需重复插入
                         await conn.rollback()
                         return True
 
@@ -444,13 +443,14 @@ class DatabaseOperations:
                 return False
 
     async def find_context_by_reply(self, reply_message: str) -> int | None:
-        """根据回复内容查找 context_id - 使用精确匹配"""
+        """Find context_id by reply content using exact matching."""
         conn = await self.db.get_connection()
 
-        # 首先尝试精确匹配 messages
+        escaped_message = reply_message.replace("%", "\\%").replace("_", "\\_")
+
         async with conn.execute(
-            "SELECT context_id, messages FROM reply_contents WHERE messages LIKE ?",
-            (f"%{reply_message}%",)
+            "SELECT context_id, messages FROM reply_contents WHERE messages LIKE ? ESCAPE '\\'",
+            (f"%{escaped_message}%",)
         ) as cursor:
             async for row in cursor:
                 messages = deserialize_messages(row["messages"])
@@ -458,7 +458,6 @@ class DatabaseOperations:
                     if msg == reply_message:
                         return row["context_id"]
 
-        # 备选：通过回复关键词查找（适用于图片等媒体消息）
         async with conn.execute(
             "SELECT context_id FROM reply_contents WHERE keywords = ?", (reply_message,)
         ) as cursor:
@@ -466,7 +465,6 @@ class DatabaseOperations:
             if row:
                 return row["context_id"]
 
-        # 备选：通过触发关键词查找
         async with conn.execute(
             "SELECT id FROM trigger_keywords WHERE keywords = ?", (reply_message,)
         ) as cursor:
@@ -477,13 +475,12 @@ class DatabaseOperations:
         return None
 
     async def clear_expired_triggers(self, expiration: int, min_trigger_count: int = 3) -> int:
-        """清理过期的触发关键词"""
+        """Clear expired trigger keywords."""
         async with self.db._lock:
             conn = await self.db.get_connection()
 
             await conn.execute("BEGIN IMMEDIATE")
             try:
-                # 删除长期未使用的触发关键词
                 await conn.execute(
                     """DELETE FROM trigger_keywords
                     WHERE time < ?
@@ -495,7 +492,6 @@ class DatabaseOperations:
                     (expiration, min_trigger_count, expiration),
                 )
 
-                # 清理高频触发关键词的低频回复
                 async with conn.execute(
                     "SELECT id FROM trigger_keywords WHERE trigger_count > 100 OR clear_time < ?",
                     (expiration,),
@@ -526,13 +522,13 @@ class DatabaseOperations:
                 return 0
 
 
-# 全局实例
+# Global instances
 db_manager: DatabaseManager | None = None
 db_operations: DatabaseOperations | None = None
 
 
 async def init_db(data_dir: Path) -> None:
-    """初始化数据库"""
+    """Initialize database."""
     global db_manager, db_operations
 
     db_manager = DatabaseManager(data_dir)
