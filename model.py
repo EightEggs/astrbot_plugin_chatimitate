@@ -425,7 +425,7 @@ class Chat:
             await self.state.add_topics(group_id, keywords_list)
 
         group_msgs = self.state.get_group_messages(group_id)
-        if len(group_msgs) > self.config.save_count_threshold:
+        if len(group_msgs) > self.config.save_reserved_size:
             await self.state._trim_messages()
 
     async def _context_insert(self, pre_msg: ChatMessage | None):

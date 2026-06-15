@@ -34,7 +34,6 @@ class ChatImitateConfig:
 
         # Storage config
         storage_config = plugin_config.get("storage", {})
-        self.save_count_threshold: int = int(storage_config.get("save_count_threshold", 10))
         self.save_reserved_size: int = int(storage_config.get("save_reserved_size", 100))
         self.cleanup_expired_days: int = int(storage_config.get("cleanup_expired_days", 32))
 
@@ -85,7 +84,6 @@ class ChatImitateConfig:
                 self.topics_importance,
                 self.cross_group_threshold,
                 self.duplicate_reply,
-                self.save_count_threshold,
                 self.save_reserved_size,
                 self.cleanup_expired_days,
             ]
