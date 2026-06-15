@@ -48,11 +48,6 @@ class ChatImitatePlugin(Star):
             except Exception as e:
                 logger.warning("chatimitate: bg task cancel failed: %s", e)
 
-        try:
-            await Chat.sync()
-        except Exception as e:
-            logger.warning("chatimitate: final sync failed: %s", e, exc_info=True)
-
         if db.db_manager:
             try:
                 await db.db_manager.close()
@@ -64,11 +59,6 @@ class ChatImitatePlugin(Star):
         last_cleanup_day: int | None = None
 
         while not self._stop_event.is_set():
-            try:
-                await Chat.sync()
-            except Exception:
-                logger.warning("chatimitate: periodic sync failed", exc_info=True)
-
             today = int(time.strftime("%Y%m%d"))
             if last_cleanup_day != today:
                 try:
@@ -78,7 +68,7 @@ class ChatImitatePlugin(Star):
                     logger.warning("chatimitate: clearup_context failed", exc_info=True)
 
             try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self.config.save_time_threshold)
+                await asyncio.wait_for(self._stop_event.wait(), timeout=3600)
             except asyncio.TimeoutError:
                 continue
 

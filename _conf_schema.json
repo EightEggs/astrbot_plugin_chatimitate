@@ -51,25 +51,19 @@
   "storage": {
     "description": "数据存储",
     "type": "object",
-    "hint": "控制聊天记录的保存和清理策略",
+    "hint": "控制内存中聊天记录的保留策略",
     "items": {
-      "save_time_threshold": {
-        "description": "定时保存间隔（秒）",
-        "type": "int",
-        "default": 60,
-        "hint": "每隔多少秒将内存中的聊天记录保存到数据库。数值越小数据越安全，但频繁写入可能影响性能"
-      },
       "save_count_threshold": {
-        "description": "批量保存阈值",
+        "description": "内存清理阈值",
         "type": "int",
         "default": 10,
-        "hint": "每个群聊积累多少条消息后触发保存。与定时保存任一条件满足即触发"
+        "hint": "每个群聊积累多少条消息后触发内存清理，超出部分将被丢弃"
       },
       "save_reserved_size": {
         "description": "内存保留数量",
         "type": "int",
         "default": 100,
-        "hint": "每个群聊在内存中保留多少条最新消息。超出的消息会被清理，但已保存到数据库的记录不受影响"
+        "hint": "每个群聊在内存中保留多少条最新消息用于上下文学习"
       },
       "cleanup_expired_days": {
         "description": "数据清理天数",

@@ -116,17 +116,6 @@ class DatabaseManager:
         conn = await self.get_connection()
 
         tables = [
-            """CREATE TABLE IF NOT EXISTS chat_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                group_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                raw_message TEXT NOT NULL,
-                is_plain_text INTEGER DEFAULT 1,
-                plain_text TEXT NOT NULL,
-                keywords TEXT NOT NULL,
-                time INTEGER DEFAULT (strftime('%s', 'now')),
-                created_at INTEGER DEFAULT (strftime('%s', 'now'))
-            )""",
             """CREATE TABLE IF NOT EXISTS trigger_keywords (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 keywords TEXT UNIQUE NOT NULL,
@@ -165,8 +154,6 @@ class DatabaseManager:
             await conn.execute(table_sql)
 
         indexes = [
-            "CREATE INDEX IF NOT EXISTS idx_chat_messages_time ON chat_messages(time)",
-            "CREATE INDEX IF NOT EXISTS idx_chat_messages_group ON chat_messages(group_id, time)",
             "CREATE INDEX IF NOT EXISTS idx_trigger_keywords_keywords ON trigger_keywords(keywords)",
             "CREATE INDEX IF NOT EXISTS idx_reply_contents_context ON reply_contents(context_id)",
             "CREATE INDEX IF NOT EXISTS idx_reply_contents_group_keywords ON reply_contents(group_id, keywords)",
@@ -192,59 +179,6 @@ class DatabaseOperations:
 
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
-
-    async def save_message(self, message: ChatMessage) -> int:
-        """Save a single chat message."""
-        conn = await self.db.get_connection()
-        cursor = await conn.execute(
-            """INSERT INTO chat_messages
-            (group_id, user_id, raw_message, is_plain_text, plain_text, keywords, time)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                message.group_id,
-                message.user_id,
-                message.raw_message,
-                1 if message.is_plain_text else 0,
-                message.plain_text,
-                message.keywords,
-                message.time,
-            ),
-        )
-        await conn.commit()
-        return cursor.lastrowid or 0
-
-    async def save_messages_batch(self, messages: list[ChatMessage]) -> int:
-        """Batch save chat messages."""
-        if not messages:
-            return 0
-
-        conn = await self.db.get_connection()
-        data = [
-            (
-                msg.group_id,
-                msg.user_id,
-                msg.raw_message,
-                1 if msg.is_plain_text else 0,
-                msg.plain_text,
-                msg.keywords,
-                msg.time,
-            )
-            for msg in messages
-        ]
-
-        try:
-            await conn.executemany(
-                """INSERT INTO chat_messages
-                (group_id, user_id, raw_message, is_plain_text, plain_text, keywords, time)
-                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                data,
-            )
-            await conn.commit()
-            return len(messages)
-        except Exception:
-            await conn.rollback()
-            logger.error("chatimitate: failed to save messages batch", exc_info=True)
-            return 0
 
     async def get_trigger_keyword(self, keywords: str) -> TriggerKeyword | None:
         """Get trigger keyword and its associated data.

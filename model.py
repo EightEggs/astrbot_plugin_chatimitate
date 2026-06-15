@@ -140,7 +140,7 @@ class ChatData:
 
 
 class ChatStateManager:
-    """内存状态管理器"""
+    """In-memory state manager."""
 
     def __init__(self, config: ChatImitateConfig):
         self.config = config
@@ -162,47 +162,15 @@ class ChatStateManager:
         self._blacklist_answer: defaultdict[str, set[str]] = defaultdict(set)
         self._blacklist_answer_reserve: defaultdict[str, set[str]] = defaultdict(set)
 
-        self._late_save_time: int = 0
-
-    async def _sync(self, cur_time: int | None = None):
-        """Persist messages to database (batch commit)."""
-        if db.db_operations is None:
-            logger.warning("chatimitate: db_operations not initialized")
-            return
-
-        if cur_time is None:
-            cur_time = int(time.time())
-
+    async def _trim_messages(self):
+        """Trim in-memory message cache to save_reserved_size per group."""
         async with self._message_lock:
-            save_list = [
-                msg
-                for group_msgs in self._message_dict.values()
-                for msg in group_msgs
-                if msg.time > self._late_save_time
-            ]
-            if not save_list:
-                return
-
-            self._late_save_time = max(msg.time for msg in save_list)
-
             new_dict = {
                 group_id: group_msgs[-self.config.save_reserved_size :]
                 for group_id, group_msgs in self._message_dict.items()
             }
             self._message_dict.clear()
             self._message_dict.update(new_dict)
-
-        try:
-            await db.db_operations.save_messages_batch(save_list)
-        except Exception:
-            logger.warning(
-                "chatimitate: batch save failed, trying individual saves", exc_info=True
-            )
-            for msg in save_list:
-                try:
-                    await db.db_operations.save_message(msg)
-                except Exception:
-                    logger.warning("chatimitate: individual save failed", exc_info=True)
 
     def get_group_bot_replies(self, group_id: str, bot_id: str) -> list[dict]:
         return self._reply_dict[group_id][bot_id]
@@ -456,19 +424,9 @@ class Chat:
             keywords_list = await self.chat_data.get_keywords_list()
             await self.state.add_topics(group_id, keywords_list)
 
-        cur_time = self.chat_data.time
-
-        if self.state._late_save_time == 0:
-            self.state._late_save_time = cur_time - 1
-
         group_msgs = self.state.get_group_messages(group_id)
-        msg_count = len(group_msgs)
-        time_diff = cur_time - self.state._late_save_time
-
-        if msg_count > self.config.save_count_threshold:
-            await self.state._sync(cur_time)
-        elif time_diff > self.config.save_time_threshold:
-            await self.state._sync(cur_time)
+        if len(group_msgs) > self.config.save_count_threshold:
+            await self.state._trim_messages()
 
     async def _context_insert(self, pre_msg: ChatMessage | None):
         """Insert context relationship between consecutive messages."""
@@ -715,11 +673,11 @@ class Chat:
 
     @staticmethod
     async def sync():
-        """Sync data to database."""
+        """Trim in-memory message cache."""
         global _global_state_manager
-        if _global_state_manager is None or db.db_operations is None:
+        if _global_state_manager is None:
             return
-        await _global_state_manager._sync()
+        await _global_state_manager._trim_messages()
 
 
 _global_state_manager: ChatStateManager | None = None
@@ -729,21 +687,21 @@ _sync_task: asyncio.Task | None = None
 
 
 async def _sync_with_error_handling(state_manager: ChatStateManager):
-    """Sync task with error handling."""
+    """Trim task with error handling."""
     try:
-        await state_manager._sync()
+        await state_manager._trim_messages()
     except Exception:
-        logger.warning("chatimitate: background sync failed", exc_info=True)
+        logger.warning("chatimitate: background trim failed", exc_info=True)
 
 
 async def _sync_with_timeout(state_manager: ChatStateManager, timeout: float = 5.0):
-    """Sync task with timeout protection."""
+    """Trim task with timeout protection."""
     try:
-        await asyncio.wait_for(state_manager._sync(), timeout=timeout)
+        await asyncio.wait_for(state_manager._trim_messages(), timeout=timeout)
     except asyncio.TimeoutError:
-        logger.warning("chatimitate: sync timeout during config change")
+        logger.warning("chatimitate: trim timeout during config change")
     except Exception:
-        logger.warning("chatimitate: sync failed during config change", exc_info=True)
+        logger.warning("chatimitate: trim failed during config change", exc_info=True)
 
 
 def get_global_state_manager(config: ChatImitateConfig) -> ChatStateManager:
