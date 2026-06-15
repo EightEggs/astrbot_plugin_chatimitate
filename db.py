@@ -247,54 +247,66 @@ class DatabaseOperations:
             return 0
 
     async def get_trigger_keyword(self, keywords: str) -> TriggerKeyword | None:
-        """Get trigger keyword and its associated data."""
+        """Get trigger keyword and its associated data.
+
+        Uses a single transaction to ensure read consistency across
+        trigger_keywords, reply_contents, and disabled_replies tables.
+        """
         conn = await self.db.get_connection()
 
-        async with conn.execute(
-            "SELECT * FROM trigger_keywords WHERE keywords = ?", (keywords,)
-        ) as cursor:
-            trigger_row = await cursor.fetchone()
-            if not trigger_row:
-                return None
+        await conn.execute("BEGIN DEFERRED")
+        try:
+            async with conn.execute(
+                "SELECT * FROM trigger_keywords WHERE keywords = ?", (keywords,)
+            ) as cursor:
+                trigger_row = await cursor.fetchone()
+                if not trigger_row:
+                    await conn.commit()
+                    return None
 
-        replies = []
-        async with conn.execute(
-            "SELECT * FROM reply_contents WHERE context_id = ?", (trigger_row["id"],)
-        ) as cursor:
-            async for row in cursor:
-                replies.append(
-                    ReplyContent(
-                        keywords=row["keywords"],
-                        group_id=str(row["group_id"]),
-                        count=row["count"],
-                        time=row["time"],
-                        messages=deserialize_messages(row["messages"]),
-                        topical=row["topical"],
+            replies = []
+            async with conn.execute(
+                "SELECT * FROM reply_contents WHERE context_id = ?", (trigger_row["id"],)
+            ) as cursor:
+                async for row in cursor:
+                    replies.append(
+                        ReplyContent(
+                            keywords=row["keywords"],
+                            group_id=str(row["group_id"]),
+                            count=row["count"],
+                            time=row["time"],
+                            messages=deserialize_messages(row["messages"]),
+                            topical=row["topical"],
+                        )
                     )
-                )
 
-        disabled = []
-        async with conn.execute(
-            "SELECT * FROM disabled_replies WHERE context_id = ?", (trigger_row["id"],)
-        ) as cursor:
-            async for row in cursor:
-                disabled.append(
-                    DisabledReply(
-                        keywords=row["keywords"],
-                        group_id=str(row["group_id"]),
-                        reason=row["reason"],
-                        time=row["time"],
+            disabled = []
+            async with conn.execute(
+                "SELECT * FROM disabled_replies WHERE context_id = ?", (trigger_row["id"],)
+            ) as cursor:
+                async for row in cursor:
+                    disabled.append(
+                        DisabledReply(
+                            keywords=row["keywords"],
+                            group_id=str(row["group_id"]),
+                            reason=row["reason"],
+                            time=row["time"],
+                        )
                     )
-                )
 
-        return TriggerKeyword(
-            keywords=trigger_row["keywords"],
-            time=trigger_row["time"],
-            trigger_count=trigger_row["trigger_count"],
-            replies=replies,
-            disabled=disabled,
-            clear_time=trigger_row["clear_time"],
-        )
+            await conn.commit()
+
+            return TriggerKeyword(
+                keywords=trigger_row["keywords"],
+                time=trigger_row["time"],
+                trigger_count=trigger_row["trigger_count"],
+                replies=replies,
+                disabled=disabled,
+                clear_time=trigger_row["clear_time"],
+            )
+        except Exception:
+            await conn.rollback()
+            raise
 
     async def save_trigger_keyword(self, trigger: TriggerKeyword) -> None:
         """Save trigger keyword and associated data with transaction protection."""

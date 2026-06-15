@@ -17,12 +17,14 @@ def _parse_bool(value) -> bool:
 class ChatImitateConfig:
     """Configuration manager for ChatImitate plugin."""
 
+    DEFAULT_THRESHOLD_WEIGHTS = [7, 23, 70]
+
     def __init__(self, plugin_config: AstrBotConfig):
         # Learning mechanism config
         learning_config = plugin_config.get("learning", {})
         self.answer_threshold: int = int(learning_config.get("answer_threshold", 3))
         self.answer_threshold_weights: list[int] = self._ensure_list_int(
-            learning_config.get("answer_threshold_weights", [7, 23, 70])
+            learning_config.get("answer_threshold_weights", self.DEFAULT_THRESHOLD_WEIGHTS)
         )
         self.topics_size: int = int(learning_config.get("topics_size", 16))
         self.topics_importance: int = int(learning_config.get("topics_importance", 10000))
@@ -46,7 +48,7 @@ class ChatImitateConfig:
     def _ensure_list_int(self, value) -> list[int]:
         """Ensure value is a list of ints with fallback."""
         if not isinstance(value, list):
-            return [7, 23, 70]
+            return list(self.DEFAULT_THRESHOLD_WEIGHTS)
 
         result = []
         for item in value:
@@ -55,7 +57,7 @@ class ChatImitateConfig:
             except (ValueError, TypeError):
                 continue
 
-        return result if result else [7, 23, 70]
+        return result if result else list(self.DEFAULT_THRESHOLD_WEIGHTS)
 
     @property
     def answer_threshold_choice_list(self) -> list[int]:

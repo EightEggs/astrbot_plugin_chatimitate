@@ -63,7 +63,7 @@ class ChatData:
         elif text_len <= 200:
             return 6
         else:
-            return min(8, max(2, text_len // 40))
+            return min(8, max(6, text_len // 33))
 
     async def get_keywords_list(self) -> list[str]:
         """获取关键词列表（带缓存，避免阻塞事件循环）"""
@@ -724,6 +724,7 @@ class Chat:
 
 _global_state_manager: ChatStateManager | None = None
 _global_config: ChatImitateConfig | None = None
+_global_config_id: int | None = None
 _sync_task: asyncio.Task | None = None
 
 
@@ -747,12 +748,15 @@ async def _sync_with_timeout(state_manager: ChatStateManager, timeout: float = 5
 
 def get_global_state_manager(config: ChatImitateConfig) -> ChatStateManager:
     """Get or create the global state manager (singleton)."""
-    global _global_state_manager, _global_config, _sync_task
+    global _global_state_manager, _global_config, _global_config_id, _sync_task
+
+    config_id = id(config)
 
     if _global_state_manager is None:
         _global_state_manager = ChatStateManager(config)
         _global_config = config
-    elif _global_config != config:
+        _global_config_id = config_id
+    elif _global_config_id != config_id:
         if _global_state_manager is not None:
             if _sync_task is not None and not _sync_task.done():
                 _sync_task.cancel()
@@ -772,5 +776,6 @@ def get_global_state_manager(config: ChatImitateConfig) -> ChatStateManager:
                 )
         _global_state_manager = ChatStateManager(config)
         _global_config = config
+        _global_config_id = config_id
 
     return _global_state_manager

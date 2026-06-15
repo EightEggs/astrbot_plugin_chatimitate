@@ -9,7 +9,6 @@ from astrbot.api.message_components import At, AtAll, Image, Plain, Reply
 from astrbot.core.message.message_event_result import MessageChain
 
 from . import db
-from .db import compute_image_hash
 
 
 class DisableStatus:
@@ -109,16 +108,9 @@ class ReplyBanner:
             return False
 
         text_lower = text.lower().strip()
-
-        for cmd in cls.EXACT_COMMANDS:
-            if text_lower == cmd:
-                return True
-
-        for cmd in cls.PREFIX_COMMANDS:
-            if text_lower.startswith(cmd):
-                return True
-
-        return False
+        return text_lower in cls.EXACT_COMMANDS or any(
+            text_lower.startswith(cmd) for cmd in cls.PREFIX_COMMANDS
+        )
 
     @classmethod
     async def _disable_reply(cls, reply: Reply, event: AstrMessageEvent) -> str:
@@ -167,8 +159,7 @@ class ReplyBanner:
                 elif isinstance(comp, Image):
                     image_url = getattr(comp, "url") or getattr(comp, "file")
                     if image_url:
-                        image_hash = compute_image_hash(image_url)
-                        parts.append(f"[图片:{image_hash}]")
+                        parts.append(f"[图片:{image_url}]")
                 elif isinstance(comp, At):
                     qq_id = str(comp.qq) if comp.qq else ""
                     if qq_id:
