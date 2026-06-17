@@ -108,10 +108,6 @@ class ChatData:
         tokens = re.split(r"[\s,，.。!！?？;；]+", self.plain_text)
         return [t for t in tokens if len(t) > 1][:max_size]
 
-    async def get_keywords_len(self) -> int:
-        """获取关键词列表长度"""
-        return len(await self.get_keywords_list())
-
     async def get_keywords(self) -> str:
         """获取关键词字符串"""
         if self._cached_keywords_str is not None:
@@ -512,14 +508,7 @@ class Chat:
         if not context:
             return None
 
-        answer_count_threshold = random.choices(
-            self.config.answer_threshold_choice_list,
-            weights=self.config.answer_threshold_weights,
-        )[0]
-
-        keywords_len = await self.chat_data.get_keywords_len()
-        if keywords_len == ChatData._keywords_size:
-            answer_count_threshold -= 1
+        answer_count_threshold = self.config.answer_threshold
 
         cross_group_threshold = (
             1 if self.chat_data.to_me else self.config.cross_group_threshold
