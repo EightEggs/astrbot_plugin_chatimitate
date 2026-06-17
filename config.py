@@ -22,7 +22,7 @@ class ChatImitateConfig:
         learning_config = plugin_config.get("learning", {})
         self.answer_threshold: int = int(learning_config.get("answer_threshold", 3))
         self.topics_size: int = int(learning_config.get("topics_size", 16))
-        self.topics_importance: int = int(learning_config.get("topics_importance", 10000))
+        self.topics_importance: int = int(learning_config.get("topics_importance", 10))
         self.cross_group_threshold: int = int(learning_config.get("cross_group_threshold", 2))
         self.duplicate_reply: int = int(learning_config.get("duplicate_reply", 10))
         self.split_probability: float = float(learning_config.get("split_probability", 0.5))

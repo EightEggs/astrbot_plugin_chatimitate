@@ -19,7 +19,7 @@
       "topics_importance": {
         "description": "话题相关权重",
         "type": "int",
-        "default": 10000,
+        "default": 10,
         "hint": "当回复内容与最近话题相关时，增加的额外权重。数值越大越优先回复与当前话题相关的内容"
       },
       "cross_group_threshold": {
