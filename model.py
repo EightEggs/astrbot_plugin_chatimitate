@@ -3,6 +3,7 @@ AstrBot ChatImitate Plugin - Core Logic Module
 """
 
 import asyncio
+import math
 import random
 import re
 import time
@@ -608,7 +609,7 @@ class Chat:
     ) -> tuple[list[str], str] | None:
         """Select the final answer using weighted random choice."""
         weights = [
-            min(answer.count, 10) + answer.topical * self.config.topics_importance
+            math.log2(answer.count + 1) + answer.topical * self.config.topics_importance
             for answer in candidate_answers.values()
         ]
 
