@@ -542,6 +542,10 @@ class Chat:
                 answer_key in ban_keywords
                 or answer_key in recent_replies
                 or answer_key == keywords
+                or any(
+                    msg in ban_keywords or msg.removeprefix("bot") in ban_keywords
+                    for msg in answer.messages
+                )
             ):
                 continue
 

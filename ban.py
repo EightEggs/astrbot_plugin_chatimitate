@@ -149,28 +149,34 @@ class ReplyBanner:
 
     @classmethod
     def _extract_reply_content(cls, reply: Reply) -> str:
-        """Extract reply content from Reply component, supporting images, text and At."""
+        """Extract reply content matching the format stored in the database.
+
+        Mirrors the normalization in ``Chat._extract_message_content`` and
+        ``Chat._context_insert``: text and at parts are joined with single
+        spaces with at parts always appended after text parts, and an image
+        present in the message makes the content ``[图片:<url>]`` only.
+        """
         if reply.chain:
-            parts = []
+            plain_parts: list[str] = []
+            at_parts: list[str] = []
             for comp in reply.chain:
-                if isinstance(comp, Plain):
-                    if comp.text and comp.text.strip():
-                        parts.append(comp.text.strip())
-                elif isinstance(comp, Image):
+                if isinstance(comp, Image):
                     image_url = getattr(comp, "url") or getattr(comp, "file")
                     if image_url:
-                        parts.append(f"[图片:{image_url}]")
+                        return f"[图片:{image_url}]"
+                elif isinstance(comp, Plain):
+                    if comp.text and comp.text.strip():
+                        plain_parts.append(comp.text.strip())
                 elif isinstance(comp, At):
                     qq_id = str(comp.qq) if comp.qq else ""
                     if qq_id:
-                        if qq_id == "all":
-                            parts.append("[at:all]")
-                        else:
-                            parts.append(f"[at:{qq_id}]")
+                        at_parts.append(
+                            "[at:all]" if qq_id == "all" else f"[at:{qq_id}]"
+                        )
                 elif isinstance(comp, AtAll):
-                    parts.append("[at:all]")
-            if parts:
-                return "".join(parts)
+                    at_parts.append("[at:all]")
+            if plain_parts or at_parts:
+                return " ".join(plain_parts + at_parts)
 
         if reply.message_str and reply.message_str.strip():
             return reply.message_str.strip()

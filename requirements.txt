@@ -1,2 +1,2 @@
-jieba-next>=1.0.0b2
+jieba-next>=1.0.0rc1
 aiosqlite>=0.22.1
