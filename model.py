@@ -322,7 +322,7 @@ class Chat:
     async def learn(self) -> bool:
         """Learn from incoming message."""
         # 艾特消息通常带有具体身份和关系上下文，禁止进入长期学习。
-        if "[at:" in self.chat_data.plain_text:
+        if not self.config.enable_at_message_handling and "[at:" in self.chat_data.plain_text:
             return False
 
         if (
@@ -354,7 +354,7 @@ class Chat:
     async def answer(self) -> AsyncGenerator[str, None]:
         """Generate reply based on learned context."""
         # 不对包含艾特的输入做模仿回复，避免身份指向造成误回复。
-        if "[at:" in self.chat_data.plain_text:
+        if not self.config.enable_at_message_handling and "[at:" in self.chat_data.plain_text:
             return
 
         if self.chat_data.is_plain_text and len(self.chat_data.plain_text) < 2:
@@ -563,7 +563,7 @@ class Chat:
             sample_msg = answer.messages[0]
 
             # 历史艾特内容一律不可作为回复，避免复用历史 QQ 身份。
-            if "[at:" in sample_msg:
+            if not self.config.enable_at_message_handling and "[at:" in sample_msg:
                 continue
 
             if self.chat_data.is_image and not sample_msg.startswith("[图片:"):
@@ -638,7 +638,7 @@ class Chat:
 
         non_empty = [
             m for m in final_answer.messages
-            if m.strip() and "[at:" not in m
+            if m.strip() and (self.config.enable_at_message_handling or "[at:" not in m)
         ]
         if not non_empty:
             return None
@@ -746,3 +746,4 @@ def get_global_state_manager(config: ChatImitateConfig) -> ChatStateManager:
         _global_config_id = config_id
 
     return _global_state_manager
+
