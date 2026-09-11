@@ -26,6 +26,7 @@ class ChatImitateConfig:
         self.cross_group_threshold: int = int(learning_config.get("cross_group_threshold", 2))
         self.duplicate_reply: int = int(learning_config.get("duplicate_reply", 10))
         self.split_probability: float = float(learning_config.get("split_probability", 0.5))
+        self.enable_at_message_handling: bool = _parse_bool(learning_config.get("enable_at_message_handling", False))
 
         # Storage config
         storage_config = plugin_config.get("storage", {})
@@ -58,3 +59,5 @@ class ChatImitateConfig:
             return False
 
         return True
+
+

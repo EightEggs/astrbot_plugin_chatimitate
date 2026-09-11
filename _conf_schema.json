@@ -34,6 +34,12 @@
         "default": 10,
         "hint": "检查最近多少条回复内是否有重复内容。数值越大越不容易重复，但可能导致回复过于谨慎"
       },
+      "enable_at_message_handling": {
+        "description": "处理包含艾特的消息",
+        "type": "bool",
+        "default": false,
+        "hint": "关闭时不学习、不回复包含艾特的消息；开启后允许按原有逻辑处理。"
+      },
       "split_probability": {
         "description": "回复分割概率",
         "type": "float",
@@ -75,3 +81,5 @@
     }
   }
 }
+
+
