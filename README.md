@@ -11,6 +11,7 @@ _✨ 在 LLM 时代，回归模仿的初心 ✨_
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-orange.svg)](https://www.python.org/)
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.12%2B-orange.svg)](https://github.com/AstrBotDevs/AstrBot)
 [![GitHub](https://img.shields.io/badge/作者-EightEggs-blue.svg)](https://github.com/EightEggs)
+[![GitHub](https://img.shields.io/badge/作者-MikkoAyaka-blue.svg)](https://github.com/MikkoAyaka)
 [![GitHub](https://img.shields.io/badge/作者-Colin-blue.svg)](https://github.com/cocolinfff)
 
 </div>
@@ -21,7 +22,7 @@ _✨ 在 LLM 时代，回归模仿的初心 ✨_
 
 ### 原理
 
-该插件会将群友们的发言都记录在数据库中，根据群友的规律性发言进行回复。
+该插件会将群友们的发言都记录在内存中，根据群友的规律性发言进行学习，学习到的回复才会进入数据库。
 
 每当群友有一条新发言时，插件会将本条发言记录为上一条发言的可选回复之一，然后在数据库中查找符合条件的本发言的历史回复，从中选择一条进行回复。
 
@@ -62,6 +63,7 @@ _✨ 在 LLM 时代，回归模仿的初心 ✨_
 
 ## TODOs
 
+- [ ] 完善文档，解释每个学习相关设置项的作用
 - [ ] 本地测试环境搭建
 - [ ] 完整的图片学习支持
 - [ ] 支持手动添加回复和禁用词
