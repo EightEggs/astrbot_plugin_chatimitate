@@ -59,3 +59,10 @@ _✨ 在 LLM 时代，回归模仿的初心 ✨_
 - 本插件目前仅在 [NapCat](https://github.com/NapNeko/NapCatQQ) 协议端以及 `Astrbot>=4.12` 测试通过，其他协议端和版本可能会存在一些不兼容问题（以具体情况为准）
 - 看到本插件的效果可能需要等待一段时间(数周甚至一个月)，取决于群聊的活跃程度
 - 本插件的输出完全依赖于学习到的聊天记录，因此对于插件输出的内容，管理员有责任进行审核和把控
+
+## TODOs
+
+- [ ] 本地测试环境搭建
+- [ ] 完整的图片学习支持
+- [ ] 支持手动添加回复和禁用词
+- [ ] 接入 [Astrbot Pages](https://docs.astrbot.app/dev/star/guides/plugin-pages.html), 方便用户管理 sqlite 数据库
